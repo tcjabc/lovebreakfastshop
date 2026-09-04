@@ -34,7 +34,9 @@ function buildCard(order) {
   const itemsEl = card.querySelector(".order-items");
   order.items.forEach((item) => {
     const line = document.createElement("div");
-    line.textContent = `${item.name} x${item.qty}`;
+    line.textContent = item.modifiers
+      ? `${item.name}（${item.modifiers}）x${item.qty}`
+      : `${item.name} x${item.qty}`;
     itemsEl.appendChild(line);
   });
 
@@ -122,6 +124,8 @@ async function refresh() {
     columns[status].forEach((order) => container.appendChild(buildCard(order)));
   });
 }
+
+document.getElementById("staff-shop-name").textContent = SHOP_INFO ? SHOP_INFO.name : "Orders";
 
 document.getElementById("connect-printer-btn").addEventListener("click", async () => {
   try {

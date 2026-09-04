@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Order</title>
+<title>樂福 Order</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css" />
@@ -11,8 +11,20 @@
 <body>
 
   <header class="shop-header">
-    <h1 id="shop-name">Loading…</h1>
-    <p id="shop-note" class="pickup-note"></p>
+    <!-- Logo placeholder — swap for <img class="logo-placeholder" src="logo.png"
+         width="42" height="42" alt=""> (same 42px size) once the real logo
+         exists. No other layout changes needed at that point. -->
+    <div class="logo-placeholder" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="3" width="18" height="18" rx="3" stroke="rgba(43,33,28,0.55)" stroke-width="1.5" />
+        <circle cx="8.5" cy="8.5" r="1.5" stroke="rgba(43,33,28,0.55)" stroke-width="1.5" />
+        <path d="M21 15l-5-5-9 9" stroke="rgba(43,33,28,0.55)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </div>
+    <div class="shop-header-text">
+      <h1 id="shop-name">Loading…</h1>
+      <p id="shop-note" class="pickup-note"></p>
+    </div>
   </header>
 
   <main id="menu-list" class="menu-list">
@@ -44,6 +56,25 @@
     <input id="order-note" class="note-input" type="text" placeholder="例如：不要香菜 e.g. no cilantro" />
     <button id="submit-order" class="submit-btn">送出訂單 Send order</button>
     <button id="close-sheet" class="close-sheet-btn">繼續選購 Keep browsing</button>
+  </section>
+
+  <!-- Item customization -->
+  <div id="options-backdrop" class="sheet-backdrop" hidden></div>
+  <section id="options-sheet" class="checkout-sheet" hidden aria-label="Item options">
+    <div class="sheet-handle"></div>
+    <h2 id="options-title"></h2>
+    <div id="options-content"></div>
+    <div class="stepper" id="options-qty-stepper">
+      <button id="options-qty-decrement" class="decrement" aria-label="minus">−</button>
+      <span class="qty" id="options-qty">1</span>
+      <button id="options-qty-increment" class="add-btn" aria-label="plus">＋</button>
+    </div>
+    <div class="sheet-total-row">
+      <span>小計 Subtotal</span>
+      <span id="options-subtotal">NT$0</span>
+    </div>
+    <button id="options-add" class="submit-btn">加入購物車 Add to cart</button>
+    <button id="options-cancel" class="close-sheet-btn">取消 Cancel</button>
   </section>
 
   <!-- Confirmation -->

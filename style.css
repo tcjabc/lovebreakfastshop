@@ -1,42 +1,64 @@
 :root {
-  --cream: #FFFBF3;
-  --gold: #F2A93C;
-  --gold-dark: #D6901F;
-  --tea-green: #1F4D3D;
-  --tea-green-light: #2E6B54;
-  --charcoal: #3A2A1E;
-  --clay: #E8DCC8;
-  --clay-line: #DCCBAE;
-  --danger: #B3492F;
+  /* Signature Red palette */
+  --color-bg: #fbefe6;            /* main page background */
+  --color-bg-alt: #fbdfda;        /* cards, cart drawer, hover/selected states */
+  --color-accent-soft: #8fa876;   /* category tags, secondary badges — background only, not text */
+  --color-primary: #e0132b;       /* primary buttons, prices, active states */
+  --color-primary-hover: #b80e22; /* :hover/:active on primary-colored elements */
+  --color-text: #2b211c;          /* dark warm gray — body text */
+
+  --clay-line: #DCCBAE; /* hairline borders — not part of the palette, kept as-is */
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  background: var(--cream);
-  color: var(--charcoal);
+  background: var(--color-bg);
+  color: var(--color-text);
   font-family: 'Noto Sans TC', sans-serif;
   padding-bottom: 90px;
   -webkit-tap-highlight-color: transparent;
 }
 
 .shop-header {
+  display: flex;
+  align-items: center;
+  gap: 11px;
   padding: 28px 20px 18px;
   border-bottom: 1px solid var(--clay-line);
+}
+
+/* Logo placeholder — swap the whole div for a 42px <img> once the real
+   logo exists (see comment in index.html). Tinted from --color-text
+   since this header sits on the light page background. */
+.logo-placeholder {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: rgba(43, 33, 28, 0.06);
+  border: 1.6px dashed rgba(43, 33, 28, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shop-header-text {
+  text-align: left;
 }
 
 .shop-header h1 {
   margin: 0 0 4px;
   font-size: 24px;
   font-weight: 900;
-  color: var(--tea-green);
+  color: var(--color-text);
 }
 
 .pickup-note {
   margin: 0;
   font-size: 13px;
-  color: var(--charcoal);
+  color: var(--color-text);
   opacity: 0.65;
 }
 
@@ -47,7 +69,8 @@ body {
 .category-title {
   font-size: 15px;
   font-weight: 700;
-  color: var(--gold-dark);
+  color: var(--color-text);
+  background: var(--color-accent-soft);
   margin: 22px 4px 10px;
   letter-spacing: 0.02em;
 }
@@ -63,6 +86,7 @@ body {
   gap: 12px;
   padding: 14px 4px;
   border-bottom: 1px solid var(--clay-line);
+  background: var(--color-bg-alt);
 }
 
 .item-info {
@@ -78,16 +102,23 @@ body {
 
 .item-name-en {
   font-size: 12.5px;
-  color: var(--charcoal);
+  color: var(--color-text);
   opacity: 0.55;
   margin-top: 2px;
 }
 
 .item-price {
   font-size: 13.5px;
-  color: var(--tea-green);
+  color: var(--color-primary);
   font-weight: 500;
   margin-top: 4px;
+}
+
+.item-customize-hint {
+  font-size: 11.5px;
+  color: var(--color-text);
+  opacity: 0.55;
+  margin-top: 2px;
 }
 
 .stepper {
@@ -101,9 +132,9 @@ body {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 1.5px solid var(--tea-green);
-  background: var(--cream);
-  color: var(--tea-green);
+  border: 1.5px solid var(--color-primary);
+  background: var(--color-bg);
+  color: var(--color-primary);
   font-size: 18px;
   font-weight: 700;
   display: flex;
@@ -115,13 +146,13 @@ body {
 }
 
 .stepper button:active {
-  background: var(--tea-green);
-  color: var(--cream);
+  background: var(--color-primary-hover);
+  color: white;
 }
 
 .stepper button.add-btn {
-  background: var(--tea-green);
-  color: var(--cream);
+  background: var(--color-primary);
+  color: white;
 }
 
 .stepper .qty {
@@ -139,7 +170,7 @@ body {
 .empty-state {
   text-align: center;
   padding: 60px 24px;
-  color: var(--charcoal);
+  color: var(--color-text);
 }
 
 .empty-sub {
@@ -154,8 +185,8 @@ body {
   right: 16px;
   bottom: 16px;
   height: 56px;
-  background: var(--tea-green);
-  color: var(--cream);
+  background: var(--color-primary);
+  color: white;
   border: none;
   border-radius: 14px;
   display: flex;
@@ -165,8 +196,16 @@ body {
   font-family: inherit;
   font-size: 15px;
   font-weight: 700;
-  box-shadow: 0 6px 20px rgba(31, 77, 61, 0.35);
+  box-shadow: 0 6px 20px rgba(224, 19, 43, 0.35);
   cursor: pointer;
+}
+
+.cart-bar:active {
+  background: var(--color-primary-hover);
+}
+
+.cart-bar[hidden] {
+  display: none;
 }
 
 .cart-cta {
@@ -179,7 +218,7 @@ body {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(58, 42, 30, 0.4);
+  background: rgba(43, 33, 28, 0.4);
   z-index: 10;
 }
 
@@ -188,7 +227,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--cream);
+  background: var(--color-bg-alt);
   border-radius: 20px 20px 0 0;
   padding: 10px 20px 24px;
   z-index: 11;
@@ -208,7 +247,7 @@ body {
 .checkout-sheet h2 {
   margin: 0 0 12px;
   font-size: 18px;
-  color: var(--tea-green);
+  color: var(--color-text);
 }
 
 .sheet-item-row {
@@ -220,13 +259,70 @@ body {
   border-bottom: 1px solid var(--clay-line);
 }
 
+.sheet-item-mods {
+  font-size: 12px;
+  color: var(--color-text);
+  opacity: 0.6;
+}
+
+.sheet-item-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sheet-item-remove {
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  opacity: 0.5;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px;
+}
+
 .sheet-total-row {
   display: flex;
   justify-content: space-between;
   font-weight: 900;
   font-size: 17px;
-  color: var(--tea-green);
+  color: var(--color-primary);
   padding: 14px 0 4px;
+}
+
+/* Item customization sheet */
+.option-group {
+  margin-bottom: 16px;
+}
+
+.option-group-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+  opacity: 0.7;
+  margin-bottom: 8px;
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 14.5px;
+  cursor: pointer;
+}
+
+.option-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+#options-qty-stepper {
+  justify-content: center;
+  margin: 4px 0 6px;
 }
 
 .note-label {
@@ -250,8 +346,8 @@ body {
   width: 100%;
   margin-top: 16px;
   padding: 15px;
-  background: var(--gold);
-  color: var(--charcoal);
+  background: var(--color-primary);
+  color: white;
   border: none;
   border-radius: 12px;
   font-family: inherit;
@@ -260,7 +356,7 @@ body {
   cursor: pointer;
 }
 
-.submit-btn:active { background: var(--gold-dark); }
+.submit-btn:active { background: var(--color-primary-hover); }
 
 .close-sheet-btn {
   width: 100%;
@@ -268,7 +364,7 @@ body {
   padding: 12px;
   background: transparent;
   border: none;
-  color: var(--tea-green);
+  color: var(--color-text);
   font-family: inherit;
   font-weight: 500;
   font-size: 14px;
@@ -279,7 +375,7 @@ body {
 .confirm-screen {
   position: fixed;
   inset: 0;
-  background: var(--cream);
+  background: var(--color-bg);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -289,12 +385,16 @@ body {
   text-align: center;
 }
 
+.confirm-screen[hidden] {
+  display: none;
+}
+
 .confirm-icon {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: var(--tea-green);
-  color: var(--cream);
+  background: var(--color-primary);
+  color: white;
   font-size: 30px;
   display: flex;
   align-items: center;
@@ -303,7 +403,7 @@ body {
 }
 
 .confirm-screen h2 {
-  color: var(--tea-green);
+  color: var(--color-text);
   margin: 0 0 6px;
 }
 
@@ -315,7 +415,7 @@ body {
 
 .confirm-wait {
   font-weight: 700;
-  color: var(--tea-green);
+  color: var(--color-primary);
   margin-bottom: 24px !important;
 }
 

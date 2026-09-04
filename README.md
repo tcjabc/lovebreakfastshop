@@ -34,7 +34,7 @@ Easiest option: **Netlify**
    one)
 3. Create a new channel → **LINE Login** channel
 4. Inside that channel, go to the **LIFF** tab → **Add**
-   - App name: e.g. "早安豆漿店 Order"
+   - App name: e.g. "樂福 Order"
    - Size: **Full**
    - Endpoint URL: the Netlify URL from Step 2
    - Scopes: check `chat_message.write` (needed for sendMessages)

@@ -74,15 +74,34 @@ guards in `app.js`).
 * No LINE Login / `liff.getProfile()` is used anywhere yet — orders
 are fully anonymous, no customer identity is captured or required.
 
-## Known-fixed bug (context for git history)
+## Hidden/toggle bug pattern (context for git history)
 
-`style.css` originally set `display: flex` directly on `.cart-bar`
-and `.confirm-screen`, which silently overrode the HTML `hidden`
-attribute (a CSS specificity issue, not a JS bug) — the confirmation
-overlay was visible on every page load regardless of order state.
-Fixed by adding `\[hidden] { display: none }` overrides at the end of
-`style.css`. If similar hidden/toggle bugs appear elsewhere, check for
-this same pattern first.
+`style.css` sets `display: flex` directly on both `.cart-bar` and
+`.confirm-screen`, which silently overrides the HTML `hidden`
+attribute (author-stylesheet `display` beats the user-agent
+`[hidden]` rule regardless of specificity — not a JS bug). This
+previously caused the confirmation overlay to be visible on every
+page load regardless of order state.
+
+**Status as of 2026-09-04:** this was earlier logged in this file as
+already fixed, but `git log --follow -- style.css` showed only the
+repo's initial commit touching that file — the override had never
+actually been committed. `.confirm-screen[hidden] { display: none; }`
+has now been added directly after the `.confirm-screen` rule in
+`style.css`, so the confirmation overlay is fixed and verified
+(fresh load → hidden; checkout → shown; close → hidden again).
+
+**Still open:** `.cart-bar` has the identical bug — it's `hidden` by
+default in `index.html` and toggled via `bar.hidden` in `app.js`
+(`updateCartBar()`), but `style.css` has no `.cart-bar[hidden]`
+override, so the cart bar likely renders even with an empty cart.
+Needs the same fix (`.cart-bar[hidden] { display: none; }` after the
+`.cart-bar` rule) — not yet applied. `.empty-state`,
+`.sheet-backdrop`, and `.checkout-sheet` were checked and don't set
+an unconditional `display` in CSS, so they're unaffected. If similar
+hidden/toggle bugs appear elsewhere, check for this same pattern
+first: does the element's own CSS rule set `display` unconditionally
+without a paired `[hidden]` override?
 
 ## Deliberate design decisions — do not reverse without asking
 

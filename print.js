@@ -35,7 +35,8 @@ function buildReceipt(order) {
   // Left align for items
   push(ESC, 0x61, 0x00);
   order.items.forEach((item) => {
-    pushText(`${item.name} x${item.qty}`.padEnd(22) + `$${item.subtotal}\n`);
+    const label = item.modifiers ? `${item.name}(${item.modifiers})` : item.name;
+    pushText(`${label} x${item.qty}`.padEnd(22) + `$${item.subtotal}\n`);
   });
 
   pushText("------------------------------\n");
