@@ -124,64 +124,228 @@ function lineId(itemId, selection) {
 // Menu rendering
 // ------------------------------------------------------------
 
+// Items transcribed from the board carry certain tags as literal
+// suffixes on the name — "(素)" for vegetarian, "(熱門)"/"(熱門?)" for
+// popular — rather than dedicated data fields. This and an earlier
+// pass aren't allowed to touch menu data, so both are derived from
+// that existing text instead of adding real fields.
+function parseItemTags(name) {
+  const isVeg = /\(素\)/.test(name);
+  const isPopular = /\(熱門\??\)/.test(name);
+  const displayName = name.replace(/\s*\((素|熱門\??)\)\s*/g, " ").trim();
+  return { displayName, isVeg, isPopular };
+}
+
+// Wires the +/− (or customize) handlers for one item's stepper —
+// shared by every place an item can be rendered (browse list, search
+// results, popular row), since the same item can appear in more than
+// one of those at once.
+function wireStepper(stepper, item, hasOptions) {
+  if (hasOptions) {
+    stepper.classList.remove("zero"); // no qty/decrement to hide — always just the + button
+    stepper.querySelector(".add-btn").addEventListener("click", () => openOptionsSheet(item));
+  } else {
+    stepper.querySelector(".add-btn").addEventListener("click", () => changeQty(item.id, 1));
+    stepper.querySelector(".decrement").addEventListener("click", () => changeQty(item.id, -1));
+  }
+}
+
+// Stepper markup for one item, seeded from its current cart quantity
+// (only meaningful for plain items — customized items always render
+// at 0/hidden since they never show an inline qty, see renderMenu
+// docs above). Needed because #menu-list gets rebuilt from scratch
+// on every search/browse toggle, not just on cart changes, so a
+// hardcoded "0" would silently drop out of sync with the real cart.
+function stepperHtml(item, hasOptions) {
+  const currentQty = hasOptions ? 0 : (cart[item.id] && cart[item.id].qty) || 0;
+  return `
+    <div class="stepper${currentQty === 0 ? " zero" : ""}" data-item-id="${item.id}">
+      ${hasOptions ? "" : `<button class="decrement" aria-label="minus">−</button><span class="qty">${currentQty}</span>`}
+      <button class="add-btn" aria-label="${hasOptions ? "customize" : "plus"}">＋</button>
+    </div>
+  `;
+}
+
+// Builds one full-width item row — used for both the accordion's
+// category content and the flat search-results list.
+function buildItemRow(item) {
+  const hasOptions = itemHasOptions(item);
+  const priceLabel = item.priceThin != null
+    ? `NT$${item.priceThin}${item.priceThick != null ? "起" : ""}`
+    : `NT$${item.price}`;
+  const { displayName, isVeg } = parseItemTags(item.name);
+
+  const row = document.createElement("div");
+  row.className = "menu-item";
+  row.innerHTML = `
+    <div class="item-info">
+      <div class="item-name">${displayName}${isVeg ? `<span class="item-badge veg-badge">蛋奶素</span>` : ""}</div>
+      <div class="item-name-en">${item.nameEn}</div>
+      <div class="item-price">${priceLabel}</div>
+      ${hasOptions ? `<div class="item-customize-hint">可客製化 Customizable</div>` : ""}
+    </div>
+    ${stepperHtml(item, hasOptions)}
+  `;
+  wireStepper(row.querySelector(".stepper"), item, hasOptions);
+  return row;
+}
+
+// Builds one compact card for the horizontally-scrolling 熱門商品 row —
+// same text/button components as buildItemRow, different container.
+function buildPopularCard(item) {
+  const hasOptions = itemHasOptions(item);
+  const priceLabel = item.priceThin != null
+    ? `NT$${item.priceThin}${item.priceThick != null ? "起" : ""}`
+    : `NT$${item.price}`;
+  const { displayName, isVeg } = parseItemTags(item.name);
+
+  const card = document.createElement("div");
+  card.className = "popular-card";
+  card.innerHTML = `
+    <div class="item-name">${displayName}${isVeg ? `<span class="item-badge veg-badge">蛋奶素</span>` : ""}</div>
+    <div class="item-price">${priceLabel}</div>
+    ${stepperHtml(item, hasOptions)}
+  `;
+  wireStepper(card.querySelector(".stepper"), item, hasOptions);
+  return card;
+}
+
+// True once renderPopularRow() has run and found at least one item —
+// used to keep the row hidden in browse mode too when there's nothing
+// tagged (熱門)/(熱門?) in the current menu data.
+let hasPopularItems = false;
+
+function renderPopularRow() {
+  const wrap = document.getElementById("popular-row-wrap");
+  const row = document.getElementById("popular-row");
+  row.innerHTML = "";
+
+  const popularItems = [];
+  MENU.forEach((category) => {
+    category.items.forEach((item) => {
+      if (parseItemTags(item.name).isPopular) popularItems.push(item);
+    });
+  });
+
+  hasPopularItems = popularItems.length > 0;
+  wrap.hidden = !hasPopularItems;
+  popularItems.forEach((item) => row.appendChild(buildPopularCard(item)));
+}
+
+// Which category index is currently expanded (null = all collapsed).
+let openCategoryIndex = null;
+
+// Vertical accordion — one header row per category (name + item
+// count + chevron), single-open-at-a-time, all collapsed by default.
+function renderBrowseList() {
+  const list = document.getElementById("menu-list");
+  list.innerHTML = "";
+  openCategoryIndex = null;
+
+  MENU.forEach((category, catIndex) => {
+    const section = document.createElement("div");
+    section.className = "category-section";
+
+    const header = document.createElement("button");
+    header.className = "category-header";
+    header.type = "button";
+    header.innerHTML = `
+      <span>${category.category} (${category.items.length})</span>
+      <svg class="category-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    `;
+
+    const content = document.createElement("div");
+    content.className = "category-content";
+    content.hidden = true;
+    category.items.forEach((item) => content.appendChild(buildItemRow(item)));
+
+    header.addEventListener("click", () => {
+      const wasOpen = openCategoryIndex === catIndex;
+      document.querySelectorAll(".category-header.open").forEach((h) => h.classList.remove("open"));
+      document.querySelectorAll(".category-content").forEach((c) => (c.hidden = true));
+      if (wasOpen) {
+        openCategoryIndex = null;
+      } else {
+        header.classList.add("open");
+        content.hidden = false;
+        openCategoryIndex = catIndex;
+      }
+    });
+
+    section.appendChild(header);
+    section.appendChild(content);
+    list.appendChild(section);
+  });
+}
+
+// Flat, ungrouped list of every item whose name matches the query
+// (case-insensitive substring, ignoring the (素)/(熱門) suffixes).
+function renderSearchResults(query) {
+  const list = document.getElementById("menu-list");
+  list.innerHTML = "";
+  const q = query.trim().toLowerCase();
+
+  const matches = [];
+  MENU.forEach((category) => {
+    category.items.forEach((item) => {
+      const { displayName } = parseItemTags(item.name);
+      if (displayName.toLowerCase().includes(q)) matches.push(item);
+    });
+  });
+
+  if (matches.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "search-empty";
+    empty.textContent = "找不到符合的餐點 No matching items";
+    list.appendChild(empty);
+    return;
+  }
+
+  matches.forEach((item) => list.appendChild(buildItemRow(item)));
+}
+
+function wireSearchInput() {
+  const input = document.getElementById("search-input");
+  const popularWrap = document.getElementById("popular-row-wrap");
+
+  input.addEventListener("input", () => {
+    const query = input.value;
+    if (query.trim() === "") {
+      popularWrap.hidden = !hasPopularItems;
+      renderBrowseList();
+    } else {
+      popularWrap.hidden = true;
+      renderSearchResults(query);
+    }
+  });
+}
+
 function renderMenu() {
   document.getElementById("shop-name").textContent = SHOP_INFO.name;
   document.getElementById("shop-note").textContent = SHOP_INFO.pickupNote;
 
-  const list = document.getElementById("menu-list");
-  list.innerHTML = "";
-
-  MENU.forEach((category) => {
-    const heading = document.createElement("div");
-    heading.className = "category-title";
-    heading.textContent = category.category;
-    list.appendChild(heading);
-
-    category.items.forEach((item) => {
-      const hasOptions = itemHasOptions(item);
-      const priceLabel = item.priceThin != null
-        ? `NT$${item.priceThin}${item.priceThick != null ? "起" : ""}`
-        : `NT$${item.price}`;
-
-      const row = document.createElement("div");
-      row.className = "menu-item";
-      row.innerHTML = `
-        <div class="item-info">
-          <div class="item-name">${item.name}</div>
-          <div class="item-name-en">${item.nameEn}</div>
-          <div class="item-price">${priceLabel}</div>
-          ${hasOptions ? `<div class="item-customize-hint">可客製化 Customizable</div>` : ""}
-        </div>
-        <div class="stepper zero" id="stepper-${item.id}">
-          ${hasOptions ? "" : `<button class="decrement" aria-label="minus">−</button><span class="qty">0</span>`}
-          <button class="add-btn" aria-label="${hasOptions ? "customize" : "plus"}">＋</button>
-        </div>
-      `;
-      list.appendChild(row);
-
-      const stepper = row.querySelector(`#stepper-${item.id}`);
-      if (hasOptions) {
-        stepper.classList.remove("zero"); // no qty/decrement to hide — always just the + button
-        stepper.querySelector(".add-btn").addEventListener("click", () => openOptionsSheet(item));
-      } else {
-        stepper.querySelector(".add-btn").addEventListener("click", () => changeQty(item.id, 1));
-        stepper.querySelector(".decrement").addEventListener("click", () => changeQty(item.id, -1));
-      }
-    });
-  });
+  document.getElementById("search-input").value = "";
+  renderPopularRow();
+  renderBrowseList();
 }
 
 // Plain (no-options) items only — items with options are added via
 // the options sheet's "Add to cart" instead (see confirmAddOptions).
+// Updates every rendered instance of this item (it may appear in the
+// popular row, the open accordion section, and/or search results at
+// the same time), keyed by data-item-id rather than a single id.
 function changeQty(id, delta) {
   const current = (cart[id] && cart[id].qty) || 0;
   const next = Math.max(0, current + delta);
   if (next === 0) delete cart[id];
   else cart[id] = { itemId: id, qty: next, selection: null };
 
-  const stepper = document.getElementById(`stepper-${id}`);
-  stepper.querySelector(".qty").textContent = next;
-  stepper.classList.toggle("zero", next === 0);
+  document.querySelectorAll(`.stepper[data-item-id="${id}"]`).forEach((stepper) => {
+    stepper.querySelector(".qty").textContent = next;
+    stepper.classList.toggle("zero", next === 0);
+  });
 
   updateCartBar();
 }
@@ -478,6 +642,8 @@ async function submitOrder() {
 }
 
 function wireUpUI() {
+  wireSearchInput();
+
   document.getElementById("cart-bar").addEventListener("click", openSheet);
   document.getElementById("close-sheet").addEventListener("click", closeSheet);
   document.getElementById("sheet-backdrop").addEventListener("click", closeSheet);

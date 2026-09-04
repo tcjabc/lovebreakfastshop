@@ -27,8 +27,19 @@
     </div>
   </header>
 
+  <div class="search-bar">
+    <input id="search-input" type="search" class="search-input" placeholder="搜尋餐點" autocomplete="off" />
+  </div>
+
+  <div id="popular-row-wrap" class="popular-row-wrap" hidden>
+    <div class="popular-row-title">熱門商品</div>
+    <div id="popular-row" class="popular-row">
+      <!-- cards injected by app.js, one per item tagged (熱門)/(熱門?) -->
+    </div>
+  </div>
+
   <main id="menu-list" class="menu-list">
-    <!-- categories + items injected by app.js -->
+    <!-- accordion categories (browse mode) or flat matches (search mode), injected by app.js -->
   </main>
 
   <div id="empty-state" class="empty-state" hidden>
@@ -37,8 +48,10 @@
   </div>
 
   <button id="cart-bar" class="cart-bar" hidden>
-    <span id="cart-count">0 件</span>
-    <span id="cart-total">NT$0</span>
+    <span class="cart-summary">
+      <span id="cart-count">0 件</span>
+      <span id="cart-total">NT$0</span>
+    </span>
     <span class="cart-cta">查看訂單 View order</span>
   </button>
 
