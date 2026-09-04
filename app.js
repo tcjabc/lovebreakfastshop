@@ -4,7 +4,7 @@
 // Developers Console (see README.md for the steps).
 // ============================================================
 
-const LIFF_ID = "PUT_YOUR_LIFF_ID_HERE"; // e.g. "1234567890-AbCdEfGh"
+const LIFF_ID = "2011450491-x1jvqSz3";
 
 // cart is keyed by a "line id", not a plain item id — an item ordered
 // twice with two different customizations needs two separate lines
