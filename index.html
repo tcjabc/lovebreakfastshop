@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Order</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="shop-header">
+    <h1 id="shop-name">Loading…</h1>
+    <p id="shop-note" class="pickup-note"></p>
+  </header>
+
+  <main id="menu-list" class="menu-list">
+    <!-- categories + items injected by app.js -->
+  </main>
+
+  <div id="empty-state" class="empty-state" hidden>
+    <p>目前無法載入菜單</p>
+    <p class="empty-sub">Menu couldn't load — please reopen from the LINE chat.</p>
+  </div>
+
+  <button id="cart-bar" class="cart-bar" hidden>
+    <span id="cart-count">0 件</span>
+    <span id="cart-total">NT$0</span>
+    <span class="cart-cta">查看訂單 View order</span>
+  </button>
+
+  <!-- Checkout sheet -->
+  <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <section id="checkout-sheet" class="checkout-sheet" hidden aria-label="Your order">
+    <div class="sheet-handle"></div>
+    <h2>你的訂單 Your order</h2>
+    <div id="sheet-items" class="sheet-items"></div>
+    <div class="sheet-total-row">
+      <span>總計 Total</span>
+      <span id="sheet-total">NT$0</span>
+    </div>
+    <label class="note-label" for="order-note">備註 Note (optional)</label>
+    <input id="order-note" class="note-input" type="text" placeholder="例如：不要香菜 e.g. no cilantro" />
+    <button id="submit-order" class="submit-btn">送出訂單 Send order</button>
+    <button id="close-sheet" class="close-sheet-btn">繼續選購 Keep browsing</button>
+  </section>
+
+  <!-- Confirmation -->
+  <section id="confirm-screen" class="confirm-screen" hidden>
+    <div class="confirm-icon">✓</div>
+    <h2>訂單已送出！</h2>
+    <p id="confirm-order-id"></p>
+    <p id="confirm-wait" class="confirm-wait"></p>
+    <button id="confirm-close" class="submit-btn">關閉 Close</button>
+  </section>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="menu.js"></script>
+  <script src="supabase-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

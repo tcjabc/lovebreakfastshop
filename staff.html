@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Orders — Staff</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="staff-style.css" />
+</head>
+<body>
+
+  <header class="staff-header">
+    <h1>訂單 Orders</h1>
+    <button id="connect-printer-btn" class="connect-btn">🖨️ 連接印表機 Connect printer</button>
+  </header>
+
+  <div class="columns">
+    <section class="column">
+      <h2 class="col-title pending">待處理 Pending</h2>
+      <div id="col-pending" class="order-cards"></div>
+    </section>
+    <section class="column">
+      <h2 class="col-title preparing">製作中 Preparing</h2>
+      <div id="col-preparing" class="order-cards"></div>
+    </section>
+    <section class="column">
+      <h2 class="col-title ready">可取餐 Ready</h2>
+      <div id="col-ready" class="order-cards"></div>
+    </section>
+  </div>
+
+  <template id="order-card-template">
+    <div class="order-card">
+      <div class="order-card-top">
+        <span class="order-id"></span>
+        <span class="order-time"></span>
+      </div>
+      <div class="order-items"></div>
+      <div class="order-note"></div>
+      <div class="order-total"></div>
+      <div class="order-actions"></div>
+    </div>
+  </template>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="menu.js"></script>
+  <script src="supabase-config.js"></script>
+  <script src="print.js"></script>
+  <script src="staff.js"></script>
+</body>
+</html>
