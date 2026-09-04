@@ -586,6 +586,76 @@ function buildOrderMessage() {
   return lines.join("\n");
 }
 
+// Flex Message "receipt card" sent into the LINE chat alongside the
+// Supabase save — same Signature Red palette as style.css, hardcoded
+// here since Flex Message JSON is sent to LINE's API, not rendered by
+// our own CSS, so it can't reference the custom properties directly.
+// altText reuses buildOrderMessage()'s plain-text summary — it's what
+// LINE shows in push notifications / chat-list previews when the
+// bubble itself can't render, and it's required on every Flex Message.
+function buildOrderFlexMessage(saved, orderItems, total, waitText) {
+  const itemRows = orderItems.map((item) => ({
+    type: "box",
+    layout: "horizontal",
+    contents: [
+      {
+        type: "text",
+        text: item.modifiers ? `${item.name}（${item.modifiers}）x${item.qty}` : `${item.name} x${item.qty}`,
+        size: "sm",
+        color: "#2b211c",
+        flex: 4,
+        wrap: true,
+      },
+      { type: "text", text: `$${item.subtotal}`, size: "sm", color: "#2b211c", flex: 1, align: "end" },
+    ],
+  }));
+
+  return {
+    type: "flex",
+    altText: buildOrderMessage() + `\n訂單編號 Order #${saved.short_id}`,
+    contents: {
+      type: "bubble",
+      header: {
+        type: "box",
+        layout: "vertical",
+        backgroundColor: "#e0132b",
+        paddingAll: "16px",
+        contents: [
+          { type: "text", text: "樂福", weight: "bold", size: "xl", color: "#ffffff" },
+          { type: "text", text: `訂單編號 #${saved.short_id}`, size: "sm", color: "#ffffff", margin: "sm" },
+        ],
+      },
+      body: {
+        type: "box",
+        layout: "vertical",
+        backgroundColor: "#fbefe6",
+        paddingAll: "16px",
+        spacing: "sm",
+        contents: [
+          ...itemRows,
+          { type: "separator", margin: "md", color: "#fbdfda" },
+          {
+            type: "box",
+            layout: "horizontal",
+            margin: "md",
+            contents: [
+              { type: "text", text: "總計 Total", weight: "bold", size: "md", color: "#e0132b" },
+              { type: "text", text: `NT$${total}`, weight: "bold", size: "md", color: "#e0132b", align: "end" },
+            ],
+          },
+        ],
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        backgroundColor: "#fbefe6",
+        paddingAll: "16px",
+        contents: [{ type: "text", text: waitText, size: "xs", color: "#2b211c", wrap: true }],
+      },
+    },
+  };
+}
+
 async function submitOrder() {
   const submitBtn = document.getElementById("submit-order");
   submitBtn.disabled = true;
@@ -607,23 +677,47 @@ async function submitOrder() {
   const note = document.getElementById("order-note").value.trim();
 
   try {
-    // 1. Save the order to Supabase — this is the source of truth for
-    //    status tracking and printing at the shop.
-    const saved = await insertOrder({ items: orderItems, total, note });
-
-    // 2. Also drop a copy into the LINE chat so it's visible there too
-    //    (optional — remove this block if you'd rather rely on the
-    //    staff tablet only).
-    if (liff.isInClient()) {
-      const message = buildOrderMessage() + `\n訂單編號 Order #${saved.short_id}`;
-      await liff.sendMessages([{ type: "text", text: message }]);
+    let saved;
+    try {
+      // Save the order to Supabase — this is the source of truth for
+      // status tracking and printing at the shop. Only a failure here
+      // means nothing was saved and a retry is the right call.
+      saved = await insertOrder({ items: orderItems, total, note });
+    } catch (err) {
+      console.error(err);
+      alert("送出失敗，請重試 Failed to send — please try again.");
+      return;
     }
 
-    // 3. Estimate pickup time from current queue length
-    const queueAhead = await getQueueCount();
-    const waitMinutes = estimateWaitMinutes(itemCount, queueAhead - 1); // exclude the order just placed
-    document.getElementById("confirm-wait").textContent =
-      `預估取餐時間 Estimated pickup: ~${waitMinutes} 分鐘 min`;
+    // From here on the order already exists — nothing below should be
+    // able to flip the UI back to "failed" and prompt a duplicate
+    // submission. Each optional step logs and continues on its own.
+
+    let waitMinutes = null;
+    try {
+      // Estimate pickup time from current queue length
+      const queueAhead = await getQueueCount();
+      waitMinutes = estimateWaitMinutes(itemCount, queueAhead - 1); // exclude the order just placed
+    } catch (err) {
+      console.error("Queue estimate failed (order already saved, continuing):", err);
+    }
+    const waitText =
+      waitMinutes != null
+        ? `預估取餐時間 Estimated pickup: ~${waitMinutes} 分鐘 min`
+        : `預估取餐時間 Estimated pickup: 請洽店員 ask staff`;
+
+    try {
+      // Also drop a copy into the LINE chat so it's visible there too
+      // (optional — remove this block if you'd rather rely on the
+      // staff tablet only).
+      if (liff.isInClient()) {
+        await liff.sendMessages([buildOrderFlexMessage(saved, orderItems, total, waitText)]);
+      }
+    } catch (err) {
+      console.error("LIFF sendMessages failed (order already saved, continuing):", err);
+    }
+
+    document.getElementById("confirm-wait").textContent = waitText;
     document.getElementById("confirm-order-id").textContent = `訂單編號 Order #${saved.short_id}`;
 
     closeSheet();
@@ -632,9 +726,6 @@ async function submitOrder() {
     renderMenu();
     updateCartBar();
     document.getElementById("confirm-screen").hidden = false;
-  } catch (err) {
-    console.error(err);
-    alert("送出失敗，請重試 Failed to send — please try again.");
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = "送出訂單 Send order";
