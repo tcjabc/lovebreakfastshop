@@ -133,6 +133,18 @@ body {
   margin-bottom: 6px;
 }
 
+/* Sits between .order-id and .order-time (see buildCard() in
+   staff.js) when an order's auto-print attempt failed this session.
+   margin-right: auto keeps it snug against .order-id instead of the
+   parent's space-between spreading it out evenly across all three
+   items — it absorbs the free space itself, pushing .order-time to
+   the far right same as with just the two original items. */
+.print-warning {
+  margin-right: auto;
+  padding-left: 4px;
+  font-size: 13px;
+}
+
 .order-time {
   font-weight: 500;
   color: var(--color-text);

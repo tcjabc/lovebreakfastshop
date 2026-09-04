@@ -159,11 +159,12 @@ function buildReceipt(order) {
 
 let printerDevice = null;
 
-async function connectPrinter() {
-  // Chrome will show a device picker limited to KNOWN_PRINTERS above.
-  // The user selects their thermal printer once; the browser
-  // remembers permission for that device on this site.
-  printerDevice = await navigator.usb.requestDevice({ filters: KNOWN_PRINTERS });
+// Opens + claims a USBDevice the caller has already obtained (via
+// either requestDevice()'s picker or getDevices()'s silent list), and
+// runs the same live init-command test either way. Shared so
+// connectPrinter() and silentReconnect() below can't drift apart.
+async function openAndClaim(device) {
+  printerDevice = device;
   await printerDevice.open();
   if (printerDevice.configuration === null) {
     await printerDevice.selectConfiguration(1);
@@ -204,12 +205,43 @@ async function connectPrinter() {
   return printerDevice;
 }
 
+async function connectPrinter() {
+  // Chrome will show a device picker limited to KNOWN_PRINTERS above.
+  // The user selects their thermal printer once; the browser
+  // remembers permission for that device on this site. requestDevice()
+  // requires an active user gesture (a click) — this can only be
+  // called from the manual "Connect printer" button, never from a
+  // background poll loop. See silentReconnect() for that case.
+  const device = await navigator.usb.requestDevice({ filters: KNOWN_PRINTERS });
+  return openAndClaim(device);
+}
+
+// Silently reconnects to a printer Chrome already has permission for
+// from a past connectPrinter() call — no picker, no user-gesture
+// requirement, so it's safe to call from the auto-print poll loop.
+// Returns null (doesn't throw) if there's no previously-authorized
+// device currently plugged in, so callers can fall back accordingly.
+async function silentReconnect() {
+  if (printerDevice) return printerDevice; // already connected this session
+  const devices = await navigator.usb.getDevices();
+  const device = devices[0]; // KNOWN_PRINTERS only ever authorizes one match
+  if (!device) return null;
+  return openAndClaim(device);
+}
+
 async function printOrder(order) {
   if (!navigator.usb) {
     throw new Error("WebUSB not supported — use Chrome on Android.");
   }
   if (!printerDevice) {
-    await connectPrinter();
+    const reconnected = await silentReconnect();
+    if (!reconnected) {
+      // No prior authorization to silently reuse — fall back to the
+      // picker. Fine for a manual click (has a user gesture); throws
+      // if this call isn't inside one (e.g. auto-print with no
+      // printer ever connected yet this browser/origin).
+      await connectPrinter();
+    }
   }
 
   const data = buildReceipt(order);

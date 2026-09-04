@@ -3,7 +3,20 @@
 // ============================================================
 
 const POLL_INTERVAL_MS = 5000; // check for new/updated orders every 5s
-let lastKnownIds = new Set();
+
+// Auto-print bookkeeping — both in-memory only (session-scoped, not
+// persisted). Whether an order has actually been printed lives in
+// Supabase (orders.printed) precisely so *that* survives a reload;
+// these two only need to survive within one page session:
+//   - printingInFlight: guards against a slow print still running
+//     when the next poll tick fires, before its printed=true update
+//     has landed in Supabase.
+//   - printFailed: once an order's auto-print attempt fails, stop
+//     retrying it automatically every poll tick (which would hammer a
+//     disconnected/broken printer) — staff retry via the manual Print
+//     button instead, which isn't gated by this set.
+const printingInFlight = new Set();
+const printFailed = new Set();
 
 async function fetchOrders() {
   const { data, error } = await supabaseClient
@@ -30,6 +43,17 @@ function buildCard(order) {
 
   card.querySelector(".order-id").textContent = `#${order.short_id}`;
   card.querySelector(".order-time").textContent = formatTime(order.created_at);
+
+  if (printFailed.has(order.id)) {
+    const warn = document.createElement("span");
+    warn.className = "print-warning";
+    warn.title = "自動列印失敗，請按「列印」重試 Auto-print failed — retry with the Print button";
+    warn.textContent = "⚠️";
+    // .order-card-top is a space-between flex row of exactly
+    // [order-id, order-time] — insert right after order-id specifically
+    // (not appendChild, which would land after order-time instead).
+    card.querySelector(".order-id").after(warn);
+  }
 
   const itemsEl = card.querySelector(".order-items");
   order.items.forEach((item) => {
@@ -113,13 +137,67 @@ function receiptDataFor(order) {
   };
 }
 
-async function handlePrint(order) {
+async function markPrinted(order) {
+  const { error } = await supabaseClient.from("orders").update({ printed: true }).eq("id", order.id);
+  if (error) {
+    // The physical print already happened at this point — logging
+    // rather than surfacing an alert, since there's nothing actionable
+    // for staff to do about a failed DB write. Worst case this order
+    // gets auto-printed again next poll tick (printed is still false).
+    console.error(`[Print] order #${order.short_id} printed but failed to mark printed=true:`, error);
+  }
+}
+
+// Shared by the manual Print button and the auto-print sweep below —
+// the only difference is whether a failure shows a blocking alert()
+// (fine for a direct button click; would be disruptive popping up
+// unprompted from a background poll tick, where the on-card warning
+// icon is the right amount of visible instead). Returns whether the
+// print actually succeeded, so callers can react (mark printed, flag
+// the warning icon) without duplicating the try/catch.
+async function handlePrint(order, { silent = false } = {}) {
   try {
     await ThermalPrinter.printOrder(receiptDataFor(order));
+    await markPrinted(order);
+    printFailed.delete(order.id);
+    return true;
   } catch (err) {
     console.error(err);
-    alert("列印失敗，請確認印表機已連接 Print failed — check printer connection.");
+    if (!silent) {
+      alert("列印失敗，請確認印表機已連接 Print failed — check printer connection.");
+    }
+    return false;
   }
+}
+
+// Auto-print: called every refresh() with the latest orders. For each
+// pending order not yet printed (and not already mid-print / already
+// failed this session), silently reconnects to the printer via
+// ThermalPrinter's getDevices()-based path (see print.js) and prints
+// it through the exact same handlePrint() the manual button uses.
+function autoPrintPendingOrders(orders) {
+  orders
+    .filter(
+      (order) =>
+        order.status === "pending" &&
+        !order.printed &&
+        !printingInFlight.has(order.id) &&
+        !printFailed.has(order.id)
+    )
+    .forEach(async (order) => {
+      printingInFlight.add(order.id);
+      console.log(`[AutoPrint] new unprinted pending order detected: #${order.short_id}`);
+      console.log(`[AutoPrint] calling handlePrint for #${order.short_id}`);
+      const ok = await handlePrint(order, { silent: true });
+      if (ok) {
+        console.log(`[AutoPrint] #${order.short_id} printed successfully, marked printed=true`);
+      } else {
+        console.error(`[AutoPrint] #${order.short_id} failed to print — will not auto-retry this session`);
+        printFailed.add(order.id);
+      }
+      printingInFlight.delete(order.id);
+      refresh(); // reflect the printed order / warning icon right away instead of waiting for the next poll tick
+    });
 }
 
 // Renders the exact same {text, align, bold} lines print.js would
@@ -162,6 +240,8 @@ async function refresh() {
     container.innerHTML = "";
     columns[status].forEach((order) => container.appendChild(buildCard(order)));
   });
+
+  autoPrintPendingOrders(orders);
 }
 
 document.getElementById("staff-shop-name").textContent = SHOP_INFO ? SHOP_INFO.name : "Orders";
