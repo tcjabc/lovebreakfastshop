@@ -45,6 +45,18 @@
     </section>
   </div>
 
+  <!-- Receipt preview — plain-text rendering of buildReceiptModel(),
+       so print.js's layout/alignment can be checked without a
+       physical test print. See ThermalPrinter.buildReceiptPreview. -->
+  <div id="receipt-preview-backdrop" class="preview-backdrop" hidden></div>
+  <div id="receipt-preview" class="receipt-preview" hidden aria-label="Receipt preview">
+    <div class="receipt-preview-header">
+      <span>收據預覽 Receipt preview</span>
+      <button id="receipt-preview-close" class="receipt-preview-close" aria-label="close">✕</button>
+    </div>
+    <div id="receipt-preview-body" class="receipt-preview-body"></div>
+  </div>
+
   <template id="order-card-template">
     <div class="order-card">
       <div class="order-card-top">

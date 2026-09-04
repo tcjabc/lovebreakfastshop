@@ -189,6 +189,73 @@ body {
   background: var(--color-primary-hover);
 }
 
+/* Receipt preview modal */
+.preview-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 33, 28, 0.4);
+  z-index: 20;
+}
+
+.receipt-preview {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  border-radius: 14px;
+  padding: 16px;
+  z-index: 21;
+  max-height: 80vh;
+  max-width: calc(100vw - 32px);
+  overflow: auto;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+}
+
+.receipt-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 10px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.receipt-preview-close {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  color: var(--color-text);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+/* Width is set inline from ThermalPrinter.CHARS_PER_LINE (staff.js) so
+   it always matches print.js's actual column count, rather than a
+   number hardcoded here that could silently drift out of sync. */
+.receipt-preview-body {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.receipt-preview-line {
+  white-space: pre;
+}
+
+.receipt-preview-line.center {
+  text-align: center;
+}
+
+.receipt-preview-line.bold {
+  font-weight: 700;
+}
+
 @media (max-width: 720px) {
   .columns {
     grid-template-columns: 1fr;
