@@ -4,8 +4,8 @@
 // (see README.md → "Step 6: Set up Supabase")
 // ============================================================
 
-const SUPABASE_URL = "PUT_YOUR_SUPABASE_URL_HERE"; // e.g. https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = "PUT_YOUR_SUPABASE_ANON_KEY_HERE";
+const SUPABASE_URL = "https://jqfimztzvlckwjkrqonh.supabase.co"; // e.g. https://xxxx.supabase.co
+const SUPABASE_ANON_KEY = "sb_publishable_jy24Bn15qO8O2ZsWOBdyxw_W8bxBZ8L";
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
