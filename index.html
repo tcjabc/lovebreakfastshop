@@ -32,14 +32,29 @@
          .cart-bar/.confirm-screen below. Badge: shown once a silent
          liff.isLoggedIn() check at page load finds an existing
          session — no prompt, just reflecting a state that's already
-         true. Pill: shown otherwise; tapping it opens the benefits
-         card (#benefits-card) below, the only path (besides checkout)
-         that can trigger an actual liff.login(). -->
-    <div id="member-badge" class="member-badge" hidden>
+         true; now itself a button opening #member-menu (see below).
+         Pill: shown otherwise; tapping it opens the benefits card
+         (#benefits-card) below, the only path (besides checkout) that
+         can trigger an actual liff.login(). -->
+    <button id="member-badge" class="member-badge" type="button" hidden aria-haspopup="true" aria-expanded="false">
       <img id="member-avatar" class="member-avatar" alt="" hidden />
       <span id="member-name" class="member-name"></span>
-    </div>
+    </button>
     <button id="member-pill" class="member-pill" hidden>成為會員</button>
+
+    <!-- Member menu — a small popover anchored to #member-badge
+         (opened/closed by toggleMemberMenu() in app.js). Deliberately
+         built as a bare list shell with exactly one entry today (登出)
+         so future entries (order history, stored value balance, stamp
+         card progress, favourites) can be appended as more
+         .member-menu-item buttons later without redesigning this.
+         Backdrop is a plain click-outside catcher, not a dimming
+         overlay like the sheet dialogs below — this is a small
+         anchored popover, not a full sheet. -->
+    <div id="member-menu-backdrop" class="member-menu-backdrop" hidden></div>
+    <div id="member-menu" class="member-menu" role="menu" aria-label="會員選單" hidden>
+      <button id="member-menu-logout" class="member-menu-item" role="menuitem" type="button">登出</button>
+    </div>
   </header>
 
   <div class="search-bar">

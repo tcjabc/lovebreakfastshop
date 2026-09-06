@@ -26,6 +26,7 @@ body {
   align-items: center;
   gap: 11px;
   padding: 24px 20px 16px;
+  position: relative; /* anchors #member-menu's position: absolute below */
 }
 
 /* Logo placeholder — swap the whole div for a 42px <img> once the real
@@ -65,13 +66,20 @@ body {
    .confirm-screen below (a bare `display` rule on a [hidden]-toggled
    element silently wins over the browser's own [hidden] handling —
    see CLAUDE.md's hidden/toggle bug note — so the override is
-   required here too, not optional). */
+   required here too, not optional). Now a <button> (opens #member-menu
+   — see toggleMemberMenu() in app.js), so the usual button chrome is
+   reset back to how the plain div used to look. */
 .member-badge {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-left: auto;
   flex-shrink: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
 }
 
 .member-badge[hidden] {
@@ -122,6 +130,62 @@ body {
 
 .member-pill:active {
   background: var(--color-primary-hover);
+}
+
+/* Member menu — a small popover anchored to #member-badge, not a full
+   sheet dialog like .checkout-sheet below, so it gets its own
+   lightweight shell rather than reusing that pattern. The backdrop is
+   a plain full-viewport click-outside catcher (transparent, no dimming)
+   — .sheet-backdrop's dimmed look is for a modal sheet taking over the
+   screen, which this isn't. */
+.member-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+}
+
+.member-menu-backdrop[hidden] {
+  display: none;
+}
+
+.member-menu {
+  position: absolute;
+  top: 100%;
+  right: 20px; /* matches .shop-header's own right padding, so this lines up under the header edge, not the badge's own (variable-width) edge */
+  margin-top: 8px;
+  min-width: 120px;
+  background: white;
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgba(43, 33, 28, 0.18);
+  z-index: 10;
+}
+
+.member-menu[hidden] {
+  display: none;
+}
+
+/* Bare list shell, deliberately — today's only entry (登出) proves the
+   shape; future entries (order history, stored value balance, stamp
+   card progress, favourites) are just more of these, appended below,
+   no redesign needed. */
+.member-menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.member-menu-item:active {
+  background: var(--color-bg-alt);
 }
 
 /* Search — sticky, sits directly below the header. */

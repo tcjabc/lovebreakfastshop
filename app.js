@@ -776,9 +776,10 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
 
 // Reveals the header's signed-in indicator (see .member-badge in
 // style.css / index.html) — called once syncLoggedInProfile() below
-// has a real profile. Deliberately just name/avatar for now — the
-// anchor point future member features (order history, points, stored
-// value) will attach to, not the finished member UI.
+// has a real profile. Tapping it opens #member-menu (see
+// toggleMemberMenu() below) — today just 登出, but built as the anchor
+// point future member features (order history, points, stored value)
+// will attach to as more menu entries, not a finished member UI.
 function showMemberBadge(profile) {
   const avatar = document.getElementById("member-avatar");
   if (profile.pictureUrl) {
@@ -800,6 +801,52 @@ function showMemberBadge(profile) {
 function showMemberPill() {
   document.getElementById("member-pill").hidden = false;
   document.getElementById("member-badge").hidden = true;
+}
+
+// ------------------------------------------------------------
+// Member menu — small popover anchored to #member-badge (see
+// .member-menu in style.css). Deliberately a bare list shell: today's
+// only entry is 登出, but future entries (order history, stored value
+// balance, stamp card progress, favourites) are meant to be appended
+// as more .member-menu-item buttons in index.html + more click
+// handlers here, not a redesign of this shell.
+// ------------------------------------------------------------
+
+function openMemberMenu() {
+  document.getElementById("member-menu-backdrop").hidden = false;
+  document.getElementById("member-menu").hidden = false;
+  document.getElementById("member-badge").setAttribute("aria-expanded", "true");
+}
+
+function closeMemberMenu() {
+  document.getElementById("member-menu-backdrop").hidden = true;
+  document.getElementById("member-menu").hidden = true;
+  document.getElementById("member-badge").setAttribute("aria-expanded", "false");
+}
+
+function toggleMemberMenu() {
+  if (document.getElementById("member-menu").hidden) openMemberMenu();
+  else closeMemberMenu();
+}
+
+// The only place liff.logout() is called. liff.logout() is a local SDK
+// call (clears LIFF's own stored session, no network round trip, no
+// redirect), so unlike loginWithLine() there's no async/navigate-away
+// case to handle here — this resets local state and the header view
+// synchronously, without a page reload, so an in-progress cart is
+// untouched (same reasoning as persistCartForLoginRedirect() above,
+// just with nothing to persist since nothing ever unloads). Does NOT
+// reset guestCheckoutChosen — logging out mid-session doesn't retroactively
+// mean checkout should start asking again this session.
+function handleLogout() {
+  closeMemberMenu();
+  try {
+    liff.logout();
+  } catch (err) {
+    console.error("[Login] liff.logout() failed", err);
+  }
+  currentMember = { userId: null, isTest: false, profile: null };
+  showMemberPill();
 }
 
 // Current session's LINE identity. isTest is decided by isTesterMode()
@@ -1155,6 +1202,10 @@ function wireUpUI() {
     await loginWithLine();
     closeBenefitsCard(); // closes either way — on success the badge already replaced the pill underneath
   });
+
+  document.getElementById("member-badge").addEventListener("click", toggleMemberMenu);
+  document.getElementById("member-menu-backdrop").addEventListener("click", closeMemberMenu);
+  document.getElementById("member-menu-logout").addEventListener("click", handleLogout);
 }
 
 async function init() {
