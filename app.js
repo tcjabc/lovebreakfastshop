@@ -1031,11 +1031,6 @@ async function init() {
 
   try {
     await liff.init({ liffId: LIFF_ID });
-    // TEMP DEBUG — for capturing a real ID token to test the new
-    // verifyLineToken() Edge Function helper. Remove after use.
-    if (liff.isLoggedIn()) {
-      console.log("[DEBUG id_token]", liff.getIDToken());
-    }
   } catch (err) {
     console.error("LIFF init failed", err);
     // Menu still works for browser testing even if LIFF can't init
