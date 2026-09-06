@@ -610,18 +610,19 @@ function confirmAddOptions() {
 // Checkout sheet
 // ------------------------------------------------------------
 
-// Shared caller for every Stored Value Edge Function invoked from this
-// page (balance check on opening the sheet, spend on submit). Mirrors
-// staff.js's identically-named helper — the two files are separate,
-// no-build-step scripts with no shared module to put this in, so it's
-// intentionally duplicated rather than reaching for a build step (see
-// CLAUDE.md's Architecture section). Uniformly returns
-// { ok, code?, error?, ... } whether the function itself responded
-// (any status — its JSON body is always this shape, see
-// supabase/functions/*/index.ts) or the request never completed at
-// all (offline, CORS, malformed body) — callers branch on `.code` the
-// same way regardless of which case it was.
-async function callStoredValueFunction(name, payload) {
+// Shared caller for every Edge Function invoked from this page (Stored
+// Value's balance check/spend, the Weekday Stamp Card's progress
+// check/redemption). Mirrors staff.js's similarly-purposed helper (that
+// one stays Stored-Value-specific, since staff.js has no stamp-card
+// calls to make) — the two files are separate, no-build-step scripts
+// with no shared module to put this in, so it's intentionally
+// duplicated rather than reaching for a build step (see CLAUDE.md's
+// Architecture section). Uniformly returns { ok, code?, error?, ... }
+// whether the function itself responded (any status — its JSON body is
+// always this shape, see supabase/functions/*/index.ts) or the request
+// never completed at all (offline, CORS, malformed body) — callers
+// branch on `.code` the same way regardless of which case it was.
+async function callEdgeFunction(name, payload) {
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
       method: "POST",
@@ -650,15 +651,18 @@ async function callStoredValueFunction(name, payload) {
 // over into a differently-priced cart. Guests skip the network call
 // entirely (currentMember.userId is the fast-path guard) rather than
 // paying the round-trip for a check that can never apply to them.
-async function renderPaymentMethodSection() {
+//
+// Takes the amount actually due (post any Weekday Stamp Card discount,
+// not necessarily the raw cart total — see openSheet()) so the balance
+// check and displayed option both reflect what would really be
+// charged, not the pre-discount cart total.
+async function renderPaymentMethodSection(amountDue) {
   const section = document.getElementById("payment-method-section");
   document.getElementById("payment-method-cash").checked = true;
   section.hidden = true;
 
   if (!currentMember.userId) return;
-
-  const total = cartTotal();
-  if (total <= 0) return;
+  if (amountDue <= 0) return;
 
   let idToken;
   try {
@@ -668,8 +672,8 @@ async function renderPaymentMethodSection() {
   }
   if (!idToken) return;
 
-  const result = await callStoredValueFunction("get-stored-value-balance", { id_token: idToken });
-  if (!result.ok || result.balance < total) return; // insufficient or unreachable — no option shown at all, not a disabled one
+  const result = await callEdgeFunction("get-stored-value-balance", { id_token: idToken });
+  if (!result.ok || result.balance < amountDue) return; // insufficient or unreachable — no option shown at all, not a disabled one
 
   document.getElementById("payment-method-stored-value-text").textContent =
     `使用儲值支付（餘額：NT$${result.balance}）`;
@@ -703,8 +707,23 @@ async function openSheet() {
     });
     sheetItems.appendChild(row);
   });
-  document.getElementById("sheet-total").textContent = `NT$${cartTotal()}`;
-  await renderPaymentMethodSection();
+
+  // Weekday Stamp Card — same computeStampDiscount() submitOrder() will
+  // use to actually apply it, so the preview shown here can never
+  // disagree with what gets charged.
+  const stampDiscount = computeStampDiscount();
+  document.getElementById("stamp-banner").hidden = !stampRedemptionEligible();
+  const discountRow = document.getElementById("stamp-discount-row");
+  if (stampDiscount) {
+    document.getElementById("stamp-discount-amount").textContent = `-NT$${stampDiscount.discount}`;
+    discountRow.hidden = false;
+  } else {
+    discountRow.hidden = true;
+  }
+
+  const amountDue = cartTotal() - (stampDiscount ? stampDiscount.discount : 0);
+  document.getElementById("sheet-total").textContent = `NT$${amountDue}`;
+  await renderPaymentMethodSection(amountDue);
   document.getElementById("sheet-backdrop").hidden = false;
   document.getElementById("checkout-sheet").hidden = false;
 }
@@ -875,9 +894,11 @@ function handleLogout() {
   currentMember = { userId: null, isTest: false, profile: null };
   currentFavorites = new Set();
   frequentlyBoughtItemIds = null;
+  stampProgress = null;
   showMemberPill();
   refreshFavoriteUI();
   renderMemberPicksRow();
+  refreshStampWidgetUI();
 }
 
 // Current session's LINE identity. isTest is decided by isTesterMode()
@@ -913,6 +934,7 @@ async function syncLoggedInProfile(profile) {
   await upsertMember(profile);
   showMemberBadge(profile);
   await loadMemberPicks();
+  await loadStampProgress();
 }
 
 // ------------------------------------------------------------
@@ -1022,6 +1044,130 @@ async function renderMemberPicksRow() {
   wrap.hidden = false;
 }
 
+// ------------------------------------------------------------
+// Weekday Stamp Card — spend NT$85+ each of Mon-Thu, redeem one free
+// drink (capped at NT$35) on Friday. All of the actual unlock/redeemed
+// logic lives server-side (get-stamp-progress / redeem-stamp-drink) —
+// this section only ever displays what those returned and re-derives
+// the client-side "is it Friday, is there a drink in the cart to
+// redeem against" questions needed to decide what to show/send, never
+// the security-relevant unlocked/redeemed decision itself.
+// ------------------------------------------------------------
+
+// Result of the one get-stamp-progress call made at login (see
+// loadStampProgress()) — { days:[mon,tue,wed,thu], unlocked, redeemed,
+// weekStart } or null (guest, not yet loaded, or the call failed).
+// Deliberately not re-fetched per checkout-sheet open, unlike Stored
+// Value's balance — a day's qualifying-spend state and this week's
+// redemption don't meaningfully change within one session the way a
+// balance can.
+let stampProgress = null;
+
+// Today's day-of-week per Asia/Taipei, independent of the visitor's
+// own device timezone — matches how the backend (get-stamp-progress /
+// redeem-stamp-drink, see _shared/taipeiWeek.ts) decides "is it
+// Friday", so the client's banner/redemption attempt can't disagree
+// with what the server will actually accept.
+function isTaipeiFriday() {
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Taipei", weekday: "short" }).format(new Date());
+  return weekday === "Fri";
+}
+
+function findItemCategory(itemId) {
+  for (const cat of MENU) {
+    if (cat.items.some((i) => i.id === itemId)) return cat.category;
+  }
+  return null;
+}
+
+// The 飲品 line the free-drink redemption would apply to, if any —
+// picks the most expensive one when more than one is in the cart
+// (maximizes the discount; nothing in the spec says to prefer
+// otherwise). null if the cart has no drink at all.
+function findDrinkForStampRedemption() {
+  let best = null;
+  Object.values(cart).forEach((line) => {
+    if (findItemCategory(line.itemId) !== "飲品") return;
+    const item = findItem(line.itemId);
+    if (!item) return;
+    const unitPrice = lineUnitPrice(item, line.selection);
+    if (!best || unitPrice > best.unitPrice) {
+      best = { itemId: line.itemId, unitPrice };
+    }
+  });
+  return best;
+}
+
+// Whether this checkout COULD redeem the weekly free drink right now —
+// purely a client-side UI decision (show the banner, attempt the
+// call). redeem-stamp-drink re-derives unlocked/redeemed/is-it-Friday
+// itself from the database regardless — this is never trusted as the
+// actual security check.
+function stampRedemptionEligible() {
+  return Boolean(currentMember.userId && stampProgress && stampProgress.unlocked && !stampProgress.redeemed && isTaipeiFriday());
+}
+
+// Single source for "how much would the free-drink redemption take off
+// this order right now" — called identically by openSheet()'s live
+// preview and submitOrder()'s actual redemption, so the number shown
+// at checkout can never drift from the number actually charged.
+// Returns null whenever there's nothing to redeem (not eligible, or no
+// drink in the cart to apply it to).
+function computeStampDiscount() {
+  if (!stampRedemptionEligible()) return null;
+  const drink = findDrinkForStampRedemption();
+  if (!drink) return null;
+  return { itemId: drink.itemId, discount: Math.min(drink.unitPrice, 35) };
+}
+
+// Called once right after login resolves (syncLoggedInProfile()),
+// mirroring loadMemberPicks(). A failed/unreachable call leaves
+// stampProgress null — stampRedemptionEligible() treats that exactly
+// like "not unlocked", so a fetch hiccup just means no banner shown
+// this session, never a false unlock.
+async function loadStampProgress() {
+  let idToken;
+  try {
+    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
+  } catch (err) {
+    idToken = null;
+  }
+  if (!idToken) {
+    stampProgress = null;
+  } else {
+    const result = await callEdgeFunction("get-stamp-progress", { id_token: idToken });
+    stampProgress = result.ok ? result : null;
+  }
+  refreshStampWidgetUI();
+}
+
+// Updates every rendered 5-circle widget (there may be more than one —
+// #benefits-card and #checkout-auth-dialog both render one via
+// renderBenefitRows(), same as favourites' stars appearing in more
+// than one place) to match stampProgress. Guests/not-yet-loaded show
+// the widget in its default all-dashed state, same division of labour
+// as refreshFavoriteUI(): the build*() functions render a static
+// structure, this function is the only place fill state ever changes.
+function refreshStampWidgetUI() {
+  const days = stampProgress ? stampProgress.days : [false, false, false, false];
+  const unlocked = Boolean(stampProgress && stampProgress.unlocked);
+
+  document.querySelectorAll(".stamp-circle[data-day]").forEach((circle) => {
+    const isFilled = Boolean(days[Number(circle.dataset.day)]);
+    circle.classList.toggle("filled", isFilled);
+  });
+  document.querySelectorAll(".stamp-circle-fri").forEach((circle) => {
+    circle.classList.toggle("unlocked", unlocked);
+  });
+
+  // #benefits-login only makes sense for a not-yet-logged-in visitor —
+  // reusing #benefits-card for a logged-in member's real stamp
+  // progress (see #member-menu-stamp-card in wireUpUI()) would
+  // otherwise show a redundant "connect with LINE" button to someone
+  // already connected.
+  document.getElementById("benefits-login").hidden = Boolean(currentMember.userId);
+}
+
 // Silent membership check — called once from init() at page load.
 // liff.isLoggedIn() alone never shows anything (it's a state read, not
 // an action), so this is safe to always run: logged in already (e.g.
@@ -1072,20 +1218,53 @@ async function loginWithLine() {
   }
 }
 
-// Single source for the three member-benefit rows shown identically
-// in #benefits-card and the checkout auth dialog (#checkout-auth-dialog)
+// Single source for the member-benefit rows shown identically in
+// #benefits-card and the checkout auth dialog (#checkout-auth-dialog)
 // — edit the copy here, not in index.html, so the two can't drift
-// apart. renderBenefitRows() builds the same {placeholder, caption}
-// markup used before this was factored out — same .benefit-row/
-// .benefit-placeholder/.benefit-caption classes, same styling.
+// apart. The old "累積點數" (reward points) placeholder caption is gone;
+// the Weekday Stamp Card replaced that concept with a real widget
+// (buildStampCardRow() below) instead of a placeholder line, so only
+// the other two benefits stay as plain {placeholder, caption} rows.
 const MEMBER_BENEFIT_CAPTIONS = [
-  "累積點數，兌換優惠與免費商品！",
   "儲值餘額，結帳更快速，取餐無縫接軌。",
   "優先顯示最愛餐點，下次點餐更省時！",
 ];
 
+// Weekday Stamp Card row — 5 circles (一~四 dashed/filled per that
+// day's qualifying spend, 五 always shows a cup icon and gets its own
+// "unlocked" state once 一~四 are all filled). Renders the same static
+// structure every time regardless of login state; refreshStampWidgetUI()
+// is the only place fill state ever changes, same division of labour
+// as favStarHtml()/refreshFavoriteUI() for the favourites star.
+function buildStampCardRow() {
+  const row = document.createElement("div");
+  row.className = "benefit-row";
+
+  const widget = document.createElement("div");
+  widget.className = "stamp-widget";
+  for (let i = 0; i < 4; i++) {
+    const circle = document.createElement("div");
+    circle.className = "stamp-circle";
+    circle.dataset.day = String(i); // 0=Mon .. 3=Thu
+    widget.appendChild(circle);
+  }
+  const friCircle = document.createElement("div");
+  friCircle.className = "stamp-circle stamp-circle-fri";
+  friCircle.textContent = "☕";
+  widget.appendChild(friCircle);
+
+  const captionEl = document.createElement("p");
+  captionEl.className = "benefit-caption";
+  captionEl.textContent = "週一至週四單日消費滿NT$85，週五即可兌換一杯免費飲品！";
+
+  row.appendChild(widget);
+  row.appendChild(captionEl);
+  return row;
+}
+
 function renderBenefitRows(container) {
   container.innerHTML = "";
+  container.appendChild(buildStampCardRow());
   MEMBER_BENEFIT_CAPTIONS.forEach((caption) => {
     const row = document.createElement("div");
     row.className = "benefit-row";
@@ -1190,7 +1369,7 @@ async function submitOrder() {
       subtotal: unit * line.qty,
     };
   });
-  const total = cartTotal();
+  const rawTotal = cartTotal();
   const itemCount = cartCount();
   const note = document.getElementById("order-note").value.trim();
 
@@ -1204,18 +1383,55 @@ async function submitOrder() {
       ? "stored_value"
       : "cash_on_pickup";
 
+  // Same computeStampDiscount() the checkout sheet's own preview used
+  // (see openSheet()) — can't disagree with what was just shown.
+  const stampDiscount = computeStampDiscount();
+
   try {
-    // Stored-value orders generate their id client-side and spend
-    // against it *before* the order itself exists — spend-stored-value
-    // and this order row end up sharing the same id, so the deduction
-    // and the order it paid for are always linkable. Cash orders keep
-    // letting Postgres generate the id, exactly as before this feature
-    // existed (orderId stays null, insertOrder() below leaves it unset).
+    // A stored-value spend and/or a stamp-card redemption both need the
+    // order's id generated client-side *before* the order itself
+    // exists (each is called against it before insertOrder() below) —
+    // generated once here, shared by whichever of the two actually
+    // applies, rather than each generating (and needing) its own.
+    // Cash-only orders with no redemption keep letting Postgres
+    // generate the id, exactly as before either feature existed.
     let orderId = null;
+    if (paymentMethod === "stored_value" || stampDiscount) {
+      orderId = crypto.randomUUID();
+    }
+
+    // total starts undiscounted and is only ever reduced below, once
+    // redeem-stamp-drink has actually confirmed the redemption — never
+    // upfront, since the redemption can still fail (a concurrent
+    // redemption on another device, most likely) even though
+    // computeStampDiscount() said it should apply.
+    let total = rawTotal;
+
+    if (stampDiscount) {
+      let stampIdToken;
+      try {
+        stampIdToken = liff.getIDToken();
+      } catch (err) {
+        stampIdToken = null;
+      }
+
+      const redeemResult = stampIdToken
+        ? await callEdgeFunction("redeem-stamp-drink", { id_token: stampIdToken, order_id: orderId })
+        : { ok: false, code: "unknown", error: "No ID token available" };
+
+      if (redeemResult.ok) {
+        total = rawTotal - stampDiscount.discount;
+      } else {
+        // The free drink is a bonus, not a payment method — this
+        // doesn't block checkout the way a failed stored-value spend
+        // does. Fall back to charging full price and let the order
+        // proceed; `total` stays rawTotal above.
+        console.error("[Checkout] redeem-stamp-drink failed, charging full price", redeemResult);
+        alert("免費飲品兌換失敗，已按原價計算");
+      }
+    }
 
     if (paymentMethod === "stored_value") {
-      orderId = crypto.randomUUID();
-
       let idToken;
       try {
         idToken = liff.getIDToken();
@@ -1224,7 +1440,7 @@ async function submitOrder() {
       }
 
       const spendResult = idToken
-        ? await callStoredValueFunction("spend-stored-value", {
+        ? await callEdgeFunction("spend-stored-value", {
             id_token: idToken,
             amount: total,
             order_id: orderId,
@@ -1237,7 +1453,9 @@ async function submitOrder() {
         // once when the sheet opened — not a hard failure. Let them
         // retry with cash instead of blocking checkout outright; no
         // order has been touched yet at this point, so there's nothing
-        // to roll back.
+        // to roll back (a stamp-card redemption just above, if any,
+        // already succeeded and stays applied — it's independent of
+        // how the now-discounted total ends up getting paid).
         console.error("[Checkout] spend-stored-value failed", spendResult);
         alert("儲值餘額不足，請改用現場付款");
         document.getElementById("payment-method-cash").checked = true;
@@ -1354,6 +1572,10 @@ function wireUpUI() {
   document.getElementById("member-badge").addEventListener("click", toggleMemberMenu);
   document.getElementById("member-menu-backdrop").addEventListener("click", closeMemberMenu);
   document.getElementById("member-menu-logout").addEventListener("click", handleLogout);
+  document.getElementById("member-menu-stamp-card").addEventListener("click", () => {
+    closeMemberMenu();
+    openBenefitsCard(); // already showing real, current stampProgress — see refreshStampWidgetUI()
+  });
 }
 
 async function init() {

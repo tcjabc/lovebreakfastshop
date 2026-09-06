@@ -43,16 +43,20 @@
     <button id="member-pill" class="member-pill" hidden>成為會員</button>
 
     <!-- Member menu — a small popover anchored to #member-badge
-         (opened/closed by toggleMemberMenu() in app.js). Deliberately
-         built as a bare list shell with exactly one entry today (登出)
-         so future entries (order history, stored value balance, stamp
-         card progress, favourites) can be appended as more
-         .member-menu-item buttons later without redesigning this.
-         Backdrop is a plain click-outside catcher, not a dimming
-         overlay like the sheet dialogs below — this is a small
-         anchored popover, not a full sheet. -->
+         (opened/closed by toggleMemberMenu() in app.js). Started as a
+         bare list shell with exactly one entry (登出); 集點進度 is the
+         first of the future entries that comment always meant to
+         accommodate (order history, stored value balance, favourites
+         are still to come) — reuses #benefits-card below rather than a
+         new dialog, since that already contains the real 5-circle
+         widget (see renderBenefitRows()/refreshStampWidgetUI() in
+         app.js), just previously only reachable pre-login. Backdrop is
+         a plain click-outside catcher, not a dimming overlay like the
+         sheet dialogs below — this is a small anchored popover, not a
+         full sheet. -->
     <div id="member-menu-backdrop" class="member-menu-backdrop" hidden></div>
     <div id="member-menu" class="member-menu" role="menu" aria-label="會員選單" hidden>
+      <button id="member-menu-stamp-card" class="member-menu-item" role="menuitem" type="button">集點進度</button>
       <button id="member-menu-logout" class="member-menu-item" role="menuitem" type="button">登出</button>
     </div>
   </header>
@@ -104,7 +108,27 @@
   <section id="checkout-sheet" class="checkout-sheet" hidden aria-label="Your order">
     <div class="sheet-handle"></div>
     <h2>你的訂單</h2>
+
+    <!-- Weekday Stamp Card — hidden unless stampRedemptionEligible()
+         (app.js) is true when this sheet opens: logged in, this week's
+         card fully stamped, not yet redeemed, and it's actually Friday
+         (Asia/Taipei). Purely informational — adding a 飲品 to the cart
+         (as a normal item, no special UI) is what actually triggers the
+         discount row below and the real redemption at submit time. -->
+    <div id="stamp-banner" class="stamp-banner" hidden>🎉 本週免費飲品已解鎖，加入一杯飲品即可折抵</div>
+
     <div id="sheet-items" class="sheet-items"></div>
+
+    <!-- Live preview of computeStampDiscount() (app.js) — shown only
+         once a qualifying 飲品 is actually in the cart, not just because
+         the banner above is showing. Same computation submitOrder()
+         uses to actually apply it, so this can never show a number
+         different from what gets charged. -->
+    <div id="stamp-discount-row" class="sheet-item-row stamp-discount-row" hidden>
+      <span>🎉 免費飲品折抵</span>
+      <span id="stamp-discount-amount">-NT$0</span>
+    </div>
+
     <div class="sheet-total-row">
       <span>總計</span>
       <span id="sheet-total">NT$0</span>

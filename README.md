@@ -374,6 +374,75 @@ from the existing `orders` table, no new table for this) — and if they
 have no past orders either, the row is hidden entirely rather than
 showing empty.
 
+### Weekday Stamp Card
+
+Replaces the old "reward points" concept entirely — spend NT$85+ on
+each of Monday–Thursday (calendar day, **Asia/Taipei**, not UTC — see
+`_shared/taipeiWeek.ts`) and Friday unlocks one free drink from 飲品,
+capped at NT$35 (a pricier drink like 拿鐵/美式咖啡 just costs the
+difference). One redemption per member per week.
+
+```sql
+create table if not exists stamp_redemptions (
+  user_id text not null,
+  week_start date not null, -- the Monday of the week, Asia/Taipei
+  order_id uuid not null,
+  redeemed_at timestamptz not null default now(),
+  primary key (user_id, week_start)
+);
+alter table stamp_redemptions enable row level security;
+-- zero policies: default-deny, same posture as stored_value_accounts /
+-- stored_value_transactions, because this gates a monetary discount.
+-- The primary key on (user_id, week_start) is also the double-claim
+-- guard: a second redemption insert for the same week fails atomically,
+-- same pattern as spend_stored_value()'s balance check.
+```
+
+Two Edge Functions, both verifying the caller's LIFF ID token (same
+`_shared/verifyLineToken.ts` as Stored Value's customer-facing
+functions — no staff PIN involved, this is entirely customer-initiated)
+and sharing one `_shared/stampProgress.ts` helper so "is this week
+unlocked/redeemed" can only ever be computed one way, not two
+functions quietly drifting out of sync with each other:
+
+- **`get-stamp-progress`** — for each of Mon/Tue/Wed/Thu (this week,
+  Asia/Taipei), sums that member's order totals for the day and
+  compares to NT$85; checks `stamp_redemptions` for this week. Returns
+  `{ days: [mon,tue,wed,thu], unlocked, redeemed, weekStart }`.
+- **`redeem-stamp-drink`** — re-derives unlocked/redeemed/is-it-Friday
+  itself from the database (via the same shared helper) rather than
+  trusting anything the client claims; rejects if any of those don't
+  hold. Otherwise inserts into `stamp_redemptions` — the primary key
+  rejects a concurrent double-redeem atomically, surfaced as the same
+  `already_redeemed` error a plain re-check would give.
+
+At checkout (`app.js`), a logged-in member's stamp progress is fetched
+once at page load (not re-checked per checkout-sheet open the way
+Stored Value's balance is — a day's qualifying spend/this week's
+redemption don't meaningfully change mid-session). If it's Friday and
+this week is unlocked and not yet redeemed, a banner appears in
+checkout; picking a drink is just adding it to the cart like any other
+item, no special picker. Submitting calls `redeem-stamp-drink` with the
+client-generated order id *before* inserting the order (same
+sequencing as Stored Value's spend), and only discounts the total
+(`min(drink price, 35)`, the most expensive 飲品 line if more than one
+qualifies) once that call actually succeeds — a failure (most likely a
+concurrent redemption elsewhere) doesn't block checkout, it just falls
+back to charging full price. **Not addressed in this pass:** the
+itemized lines on the order (and so the printed receipt / LINE chat
+message) still show each item at full price even when the total is
+discounted — the total is correct, but staff/customer would need to
+infer the redemption rather than see it itemized. Revisit if that
+turns out to matter in practice.
+
+The 5-circle progress widget (member benefits card — see
+`buildStampCardRow()`/`refreshStampWidgetUI()`) replaces the old
+"累積點數" placeholder caption. Reaching it while logged in is via a new
+"集點進度" entry in the member-menu popover (tap the header badge) —
+the card itself (`#benefits-card`) was previously only ever opened
+pre-login as a sign-up pitch; this reuses it rather than building a
+second dialog, hiding its login button when already signed in.
+
 ## Step 7 — Set up the staff tablet
 
 1. On the Android tablet, open **Chrome** and go to your Netlify URL +
