@@ -837,6 +837,7 @@ function showMemberBadge(profile) {
   document.getElementById("member-name").textContent = profile.displayName || "";
   document.getElementById("member-badge").hidden = false;
   document.getElementById("member-pill").hidden = true;
+  document.getElementById("header-stamp-widget").hidden = false;
 }
 
 // The header's other face for the same slot .member-badge occupies —
@@ -847,6 +848,7 @@ function showMemberBadge(profile) {
 function showMemberPill() {
   document.getElementById("member-pill").hidden = false;
   document.getElementById("member-badge").hidden = true;
+  document.getElementById("header-stamp-widget").hidden = true;
 }
 
 // ------------------------------------------------------------
@@ -1313,46 +1315,21 @@ async function loginWithLine() {
 // the Weekday Stamp Card replaced that concept with a real widget
 // (buildStampCardRow() below) instead of a placeholder line, so only
 // the other two benefits stay as plain {placeholder, caption} rows.
+// The Weekday Stamp Card's own 5-circle graphic now lives in the
+// header (#header-stamp-widget, next to the member badge — see
+// index.html/refreshStampWidgetUI()), not here — this caption is all
+// that's left of it in 會員福利, kept as plain text (same shape as the
+// other two rows) since a first-time member still needs to learn what
+// the header dots mean somewhere, just not via a second copy of the
+// graphic itself.
 const MEMBER_BENEFIT_CAPTIONS = [
+  "週一至週四單日消費滿NT$85，週五即可兌換一杯免費飲品！",
   "儲值餘額，結帳更快速，取餐無縫接軌。",
   "優先顯示最愛餐點，下次點餐更省時！",
 ];
 
-// Weekday Stamp Card row — 5 circles (一~四 dashed/filled per that
-// day's qualifying spend, 五 always shows a cup icon and gets its own
-// "unlocked" state once 一~四 are all filled). Renders the same static
-// structure every time regardless of login state; refreshStampWidgetUI()
-// is the only place fill state ever changes, same division of labour
-// as favStarHtml()/refreshFavoriteUI() for the favourites star.
-function buildStampCardRow() {
-  const row = document.createElement("div");
-  row.className = "benefit-row";
-
-  const widget = document.createElement("div");
-  widget.className = "stamp-widget";
-  for (let i = 0; i < 4; i++) {
-    const circle = document.createElement("div");
-    circle.className = "stamp-circle";
-    circle.dataset.day = String(i); // 0=Mon .. 3=Thu
-    widget.appendChild(circle);
-  }
-  const friCircle = document.createElement("div");
-  friCircle.className = "stamp-circle stamp-circle-fri";
-  friCircle.textContent = "☕";
-  widget.appendChild(friCircle);
-
-  const captionEl = document.createElement("p");
-  captionEl.className = "benefit-caption";
-  captionEl.textContent = "週一至週四單日消費滿NT$85，週五即可兌換一杯免費飲品！";
-
-  row.appendChild(widget);
-  row.appendChild(captionEl);
-  return row;
-}
-
 function renderBenefitRows(container) {
   container.innerHTML = "";
-  container.appendChild(buildStampCardRow());
   MEMBER_BENEFIT_CAPTIONS.forEach((caption) => {
     const row = document.createElement("div");
     row.className = "benefit-row";
@@ -1673,6 +1650,7 @@ function wireUpUI() {
     closeMemberMenu();
     openBenefitsCard(); // already showing real, current stampProgress — see refreshStampWidgetUI()
   });
+  document.getElementById("header-stamp-widget").addEventListener("click", openBenefitsCard); // same 集點進度 view the member-menu entry opens — not purely inert
   document.getElementById("member-menu-order-history").addEventListener("click", () => {
     closeMemberMenu();
     openOrderHistorySheet();

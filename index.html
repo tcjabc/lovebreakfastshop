@@ -26,21 +26,48 @@
       <p id="shop-note" class="pickup-note"></p>
     </div>
 
-    <!-- Signed-in indicator / "become a member" pill — exactly one of
-         these two is ever shown at a time (see syncMemberState() in
-         app.js), toggled the same [hidden]-override way as
-         .cart-bar/.confirm-screen below. Badge: shown once a silent
-         liff.isLoggedIn() check at page load finds an existing
-         session — no prompt, just reflecting a state that's already
-         true; now itself a button opening #member-menu (see below).
-         Pill: shown otherwise; tapping it opens the benefits card
-         (#benefits-card) below, the only path (besides checkout) that
-         can trigger an actual liff.login(). -->
-    <button id="member-badge" class="member-badge" type="button" hidden aria-haspopup="true" aria-expanded="false">
-      <img id="member-avatar" class="member-avatar" alt="" hidden />
-      <span id="member-name" class="member-name"></span>
-    </button>
-    <button id="member-pill" class="member-pill" hidden>成為會員</button>
+    <!-- Groups everything that lives in the header's right-hand slot —
+         previously #member-badge/#member-pill each carried their own
+         margin-left:auto to self-push right regardless of which was
+         visible; now the group carries it once, so the stamp widget
+         and the badge/pill stay adjacent to each other as a unit. -->
+    <div class="member-header-group">
+      <!-- Compact Weekday Stamp Card status — same fill/cup-icon logic
+           and .stamp-circle/.stamp-circle-fri classes as before (see
+           refreshStampWidgetUI() in app.js, unchanged), just smaller
+           (scoped by .header-stamp-widget in style.css) and living here
+           instead of inside 會員福利, which no longer renders the
+           graphic at all (see renderBenefitRows()) — its explanatory
+           caption stays, since a first-time member still needs to learn
+           what the dots mean somewhere. Shown/hidden in lockstep with
+           #member-badge (showMemberBadge()/showMemberPill()), not
+           fetched separately — reuses loadStampProgress()'s existing
+           stampProgress state. Clickable — opens the same 集點進度 view
+           the member-menu entry does, rather than being purely inert. -->
+      <button id="header-stamp-widget" class="header-stamp-widget" type="button" hidden aria-label="集點進度">
+        <div class="stamp-circle" data-day="0"></div>
+        <div class="stamp-circle" data-day="1"></div>
+        <div class="stamp-circle" data-day="2"></div>
+        <div class="stamp-circle" data-day="3"></div>
+        <div class="stamp-circle stamp-circle-fri">☕</div>
+      </button>
+
+      <!-- Signed-in indicator / "become a member" pill — exactly one of
+           these two is ever shown at a time (see syncMemberState() in
+           app.js), toggled the same [hidden]-override way as
+           .cart-bar/.confirm-screen below. Badge: shown once a silent
+           liff.isLoggedIn() check at page load finds an existing
+           session — no prompt, just reflecting a state that's already
+           true; now itself a button opening #member-menu (see below).
+           Pill: shown otherwise; tapping it opens the benefits card
+           (#benefits-card) below, the only path (besides checkout) that
+           can trigger an actual liff.login(). -->
+      <button id="member-badge" class="member-badge" type="button" hidden aria-haspopup="true" aria-expanded="false">
+        <img id="member-avatar" class="member-avatar" alt="" hidden />
+        <span id="member-name" class="member-name"></span>
+      </button>
+      <button id="member-pill" class="member-pill" hidden>成為會員</button>
+    </div>
 
     <!-- Member menu — a small popover anchored to #member-badge
          (opened/closed by toggleMemberMenu() in app.js). Started as a
@@ -48,12 +75,9 @@
          first of the future entries that comment always meant to
          accommodate (order history, stored value balance, favourites
          are still to come) — reuses #benefits-card below rather than a
-         new dialog, since that already contains the real 5-circle
-         widget (see renderBenefitRows()/refreshStampWidgetUI() in
-         app.js), just previously only reachable pre-login. Backdrop is
-         a plain click-outside catcher, not a dimming overlay like the
-         sheet dialogs below — this is a small anchored popover, not a
-         full sheet. -->
+         new dialog. Backdrop is a plain click-outside catcher, not a
+         dimming overlay like the sheet dialogs below — this is a small
+         anchored popover, not a full sheet. -->
     <div id="member-menu-backdrop" class="member-menu-backdrop" hidden></div>
     <div id="member-menu" class="member-menu" role="menu" aria-label="會員選單" hidden>
       <button id="member-menu-order-history" class="member-menu-item" role="menuitem" type="button">訂單紀錄</button>
