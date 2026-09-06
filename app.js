@@ -20,6 +20,57 @@ let activeOptionsItem = null;
 let currentSelection = null;
 let currentOptionsQty = 1;
 
+// Outside LINE, loginWithLine()'s liff.login() is a real page redirect
+// (LINE's OAuth page, then back) — a full reload, which would
+// otherwise silently wipe the in-memory `cart` above and the note
+// field along with it. persistCartForLoginRedirect() (called only from
+// that outside-LINE branch — see loginWithLine()) saves both here;
+// restoreCartAfterLoginRedirect() (called once from init(), before the
+// first render) restores and immediately clears the entry, so it can
+// never leak into an unrelated later session on the same device.
+// Doesn't run/matter for the inside-LINE synchronous-login path at
+// all, since that path never redirects and so never calls the persist
+// half of this in the first place.
+const LOGIN_REDIRECT_CART_KEY = "loginRedirectCart";
+
+function persistCartForLoginRedirect() {
+  try {
+    sessionStorage.setItem(
+      LOGIN_REDIRECT_CART_KEY,
+      JSON.stringify({ cart, note: document.getElementById("order-note").value })
+    );
+  } catch (err) {
+    console.error("[Login] failed to persist cart before redirect", err);
+  }
+}
+
+function restoreCartAfterLoginRedirect() {
+  let raw;
+  try {
+    raw = sessionStorage.getItem(LOGIN_REDIRECT_CART_KEY);
+  } catch (err) {
+    console.error("[Login] failed to read persisted cart", err);
+    return;
+  }
+  if (!raw) return;
+
+  // Clear first, before attempting to parse/apply — a malformed entry
+  // shouldn't be able to leave itself stuck here forever.
+  try {
+    sessionStorage.removeItem(LOGIN_REDIRECT_CART_KEY);
+  } catch (err) {
+    console.error("[Login] failed to clear persisted cart", err);
+  }
+
+  try {
+    const saved = JSON.parse(raw);
+    Object.assign(cart, saved.cart);
+    if (saved.note) document.getElementById("order-note").value = saved.note;
+  } catch (err) {
+    console.error("[Login] failed to restore persisted cart", err);
+  }
+}
+
 function findItem(id) {
   for (const cat of MENU) {
     const found = cat.items.find((i) => i.id === id);
@@ -743,6 +794,7 @@ async function syncMemberState() {
 async function loginWithLine() {
   try {
     if (!liff.isLoggedIn()) {
+      persistCartForLoginRedirect(); // outside-LINE only — see the comment by LOGIN_REDIRECT_CART_KEY
       liff.login();
       return false; // navigates away (outside LINE) or is mid-flight
     }
@@ -938,8 +990,10 @@ function wireUpUI() {
 }
 
 async function init() {
+  restoreCartAfterLoginRedirect(); // before the first render, so restored quantities show immediately, not after a flash of empty
   wireUpUI();
   renderMenu();
+  updateCartBar(); // renderMenu() doesn't touch the cart bar itself — reflect a restored cart's count/total right away
 
   try {
     await liff.init({ liffId: LIFF_ID });
