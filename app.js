@@ -818,7 +818,9 @@ async function init() {
   // or LIFF init above having failed) never gets mislabeled as a LIFF
   // init failure, and never blocks the rest of init().
   try {
-    if (liff.isLoggedIn()) {
+    if (!liff.isLoggedIn()) {
+      liff.login();
+    } else {
       const profile = await liff.getProfile();
       console.log("LIFF userId:", profile.userId);
     }
