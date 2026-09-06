@@ -149,7 +149,7 @@ function buildKitchenTicketModel(order) {
   const divider = "-".repeat(CHARS_PER_LINE);
   const lines = [];
 
-  lines.push({ text: `訂單編號 Order #: ${order.shortId}`, align: "center", bold: true, size: "large" });
+  lines.push({ text: `訂單編號：${order.shortId}`, align: "center", bold: true, size: "large" });
   lines.push({ text: divider, align: "left", bold: false, size: "normal" });
 
   order.items.forEach((item) => {
@@ -181,15 +181,15 @@ function buildKitchenTicket(order) {
 // ============================================================
 // CUSTOMER LABEL — the itemized receipt for the customer: full price
 // breakdown, total, payment status, and the original order#/time
-// footer. Bilingual headers; item names/modifiers stay Chinese-only,
-// same as the menu data itself.
+// footer. Chinese-only throughout, matching the menu data itself —
+// see CLAUDE.md's site-wide Chinese-only text policy.
 // ============================================================
 function buildCustomerLabelModel(order) {
   const divider = "-".repeat(CHARS_PER_LINE);
   const lines = [];
 
   lines.push({ text: order.shopName, align: "center", bold: true, size: "normal" });
-  lines.push({ text: `訂單編號 Order #: ${order.shortId}`, align: "left", bold: false, size: "normal" });
+  lines.push({ text: `訂單編號：${order.shortId}`, align: "left", bold: false, size: "normal" });
   lines.push({ text: divider, align: "left", bold: false, size: "normal" });
 
   order.items.forEach((item) => {
@@ -204,7 +204,7 @@ function buildCustomerLabelModel(order) {
 
   lines.push({ text: divider, align: "left", bold: false, size: "normal" });
   lines.push({
-    text: padColumns("總計 Total", `NT$${order.total}`, CHARS_PER_LINE),
+    text: padColumns("總計", `NT$${order.total}`, CHARS_PER_LINE),
     align: "left",
     bold: true,
     size: "normal",
@@ -213,9 +213,9 @@ function buildCustomerLabelModel(order) {
   // Hardcoded until a real payment-status field exists on the order
   // (see CLAUDE.md's loyalty/next-steps notes) — always printed, never
   // omitted. Bold + large so it reads as a confirmation, not a detail.
-  // Chinese-only (not bilingual like the order#/total lines above) —
-  // at "large" size the usable column budget is halved to 24, and the
-  // bilingual version of this line didn't fit.
+  // Chinese-only, like every other line on this receipt now — at
+  // "large" size the usable column budget is halved to 24, worth
+  // remembering if this line's text ever needs to grow.
   lines.push({
     text: "現場付款",
     align: "left",
@@ -224,10 +224,10 @@ function buildCustomerLabelModel(order) {
   });
 
   if (order.note) {
-    lines.push({ text: `Note: ${order.note}`, align: "left", bold: false, size: "normal" });
+    lines.push({ text: `備註：${order.note}`, align: "left", bold: false, size: "normal" });
   }
 
-  lines.push({ text: `Order #${order.shortId}   ${order.time}`, align: "left", bold: false, size: "normal" });
+  lines.push({ text: `訂單編號 #${order.shortId}   ${order.time}`, align: "left", bold: false, size: "normal" });
 
   return lines;
 }

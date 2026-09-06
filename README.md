@@ -14,9 +14,12 @@ custom domain.
 
 ## Step 1 — Edit the menu
 
-Open `menu.js` and edit the `MENU` array: category names, item names
-(Chinese + English), and prices. No other file needs to change for a
-menu update. Also update `SHOP_INFO.name` to the real shop name.
+Open `menu.js` and edit the `MENU` array: category names, item names,
+and prices. All user-facing text in this app is Chinese-only (see
+CLAUDE.md) — leave `nameEn` blank (`""`) as the other items do; it's
+still there as a field, just unused by design now. No other file
+needs to change for a menu update. Also update `SHOP_INFO.name` to
+the real shop name.
 
 ## Step 2 — Host the files
 

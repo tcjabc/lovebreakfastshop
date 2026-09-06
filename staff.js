@@ -47,7 +47,7 @@ function buildCard(order) {
   if (printFailed.has(order.id)) {
     const warn = document.createElement("span");
     warn.className = "print-warning";
-    warn.title = "自動列印失敗，請按「列印」重試 Auto-print failed — retry with the Print button";
+    warn.title = "自動列印失敗，請按「列印」重試";
     warn.textContent = "⚠️";
     // .order-card-top is a space-between flex row of exactly
     // [order-id, order-time] — insert right after order-id specifically
@@ -77,32 +77,32 @@ function buildCard(order) {
 
   const printBtn = document.createElement("button");
   printBtn.className = "action-btn print-btn";
-  printBtn.textContent = "🖨️ 列印 Print";
+  printBtn.textContent = "🖨️ 列印";
   printBtn.addEventListener("click", () => handlePrint(order));
   actions.appendChild(printBtn);
 
   const previewBtn = document.createElement("button");
   previewBtn.className = "action-btn print-btn";
-  previewBtn.textContent = "👁️ 預覽 Preview";
+  previewBtn.textContent = "👁️ 預覽";
   previewBtn.addEventListener("click", () => handlePreview(order));
   actions.appendChild(previewBtn);
 
   if (order.status === "pending") {
     const startBtn = document.createElement("button");
     startBtn.className = "action-btn primary-btn";
-    startBtn.textContent = "開始製作 Start";
+    startBtn.textContent = "開始製作";
     startBtn.addEventListener("click", () => updateStatus(order.id, "preparing"));
     actions.appendChild(startBtn);
   } else if (order.status === "preparing") {
     const readyBtn = document.createElement("button");
     readyBtn.className = "action-btn primary-btn";
-    readyBtn.textContent = "完成 Ready";
+    readyBtn.textContent = "完成";
     readyBtn.addEventListener("click", () => updateStatus(order.id, "ready"));
     actions.appendChild(readyBtn);
   } else if (order.status === "ready") {
     const doneBtn = document.createElement("button");
     doneBtn.className = "action-btn primary-btn";
-    doneBtn.textContent = "已取餐 Picked up";
+    doneBtn.textContent = "已取餐";
     doneBtn.addEventListener("click", () => updateStatus(order.id, "completed"));
     actions.appendChild(doneBtn);
   }
@@ -118,7 +118,7 @@ async function updateStatus(orderId, newStatus) {
 
   if (error) {
     console.error("Status update failed", error);
-    alert("更新失敗 Update failed");
+    alert("更新失敗");
     return;
   }
   refresh();
@@ -169,7 +169,7 @@ async function handlePrint(order, { silent = false } = {}) {
   } catch (err) {
     console.error(err);
     if (!silent) {
-      alert("列印失敗，請確認印表機已連接 Print failed — check printer connection.");
+      alert("列印失敗，請確認印表機已連接");
     }
     return false;
   }
@@ -234,8 +234,8 @@ function handlePreview(order) {
   const body = document.getElementById("receipt-preview-body");
   body.style.width = `${ThermalPrinter.CHARS_PER_LINE}ch`;
   body.innerHTML = "";
-  renderPreviewDoc(body, "🍳 Kitchen ticket", ThermalPrinter.buildKitchenTicketPreview(data));
-  renderPreviewDoc(body, "🧾 Customer label", ThermalPrinter.buildCustomerLabelPreview(data));
+  renderPreviewDoc(body, "🍳 廚房單", ThermalPrinter.buildKitchenTicketPreview(data));
+  renderPreviewDoc(body, "🧾 顧客收據", ThermalPrinter.buildCustomerLabelPreview(data));
 
   document.getElementById("receipt-preview-backdrop").hidden = false;
   document.getElementById("receipt-preview").hidden = false;
@@ -289,10 +289,10 @@ document.getElementById("receipt-preview-backdrop").addEventListener("click", cl
 document.getElementById("connect-printer-btn").addEventListener("click", async () => {
   try {
     await ThermalPrinter.connectPrinter();
-    document.getElementById("connect-printer-btn").textContent = "✓ 印表機已連接 Printer connected";
+    document.getElementById("connect-printer-btn").textContent = "✓ 印表機已連接";
   } catch (err) {
     console.error(err);
-    alert("找不到印表機，請確認已用 USB 連接 Couldn't find printer — check the USB connection.");
+    alert("找不到印表機，請確認已用 USB 連接");
   }
 });
 

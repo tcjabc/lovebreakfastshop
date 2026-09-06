@@ -233,7 +233,7 @@ function buildItemRow(item) {
       <div class="item-name">${displayName}${isVeg ? `<span class="item-badge veg-badge">蛋奶素</span>` : ""}</div>
       <div class="item-name-en">${item.nameEn}</div>
       <div class="item-price">${priceLabel}</div>
-      ${hasOptions ? `<div class="item-customize-hint">可客製化 Customizable</div>` : ""}
+      ${hasOptions ? `<div class="item-customize-hint">可客製化</div>` : ""}
     </div>
     ${stepperHtml(item, hasOptions)}
   `;
@@ -349,7 +349,7 @@ function renderSearchResults(query) {
   if (matches.length === 0) {
     const empty = document.createElement("div");
     empty.className = "search-empty";
-    empty.textContent = "找不到符合的餐點 No matching items";
+    empty.textContent = "找不到符合的餐點";
     list.appendChild(empty);
     return;
   }
@@ -471,7 +471,7 @@ function renderOptionsContent() {
   if (item.priceThick != null) {
     container.appendChild(
       buildOptionGroup({
-        title: "厚度選擇 Thickness",
+        title: "厚度選擇",
         name: "opt-thickness",
         type: "single",
         options: [
@@ -515,7 +515,7 @@ function renderOptionsContent() {
   if (item.addons && item.addons.length) {
     container.appendChild(
       buildOptionGroup({
-        title: "加點 Extras",
+        title: "加點",
         name: "opt-addons",
         type: "multi",
         options: item.addons.map((a, i) => ({ label: `${a.label} (+NT$${a.price})`, value: i })),
@@ -621,7 +621,7 @@ function closeSheet() {
 }
 
 function buildOrderMessage() {
-  const lines = [`📋 新訂單 New Order`, ``];
+  const lines = [`📋 新訂單`, ``];
   Object.values(cart).forEach((line) => {
     const item = findItem(line.itemId);
     const unit = lineUnitPrice(item, line.selection);
@@ -629,10 +629,10 @@ function buildOrderMessage() {
     const label = desc ? `${item.name}（${desc}）` : item.name;
     lines.push(`${label} x${line.qty} — NT$${unit * line.qty}`);
   });
-  lines.push(``, `總計 Total: NT$${cartTotal()}`);
+  lines.push(``, `總計：NT$${cartTotal()}`);
 
   const note = document.getElementById("order-note").value.trim();
-  if (note) lines.push(``, `備註 Note: ${note}`);
+  if (note) lines.push(``, `備註：${note}`);
 
   return lines.join("\n");
 }
@@ -663,7 +663,7 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
 
   return {
     type: "flex",
-    altText: buildOrderMessage() + `\n訂單編號 Order #${saved.short_id}`,
+    altText: buildOrderMessage() + `\n訂單編號 #${saved.short_id}`,
     contents: {
       type: "bubble",
       header: {
@@ -690,7 +690,7 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
             layout: "horizontal",
             margin: "md",
             contents: [
-              { type: "text", text: "總計 Total", weight: "bold", size: "md", color: "#e0132b" },
+              { type: "text", text: "總計", weight: "bold", size: "md", color: "#e0132b" },
               { type: "text", text: `NT$${total}`, weight: "bold", size: "md", color: "#e0132b", align: "end" },
             ],
           },
@@ -915,7 +915,7 @@ async function submitOrder() {
 
   const submitBtn = document.getElementById("submit-order");
   submitBtn.disabled = true;
-  submitBtn.textContent = "送出中… Sending…";
+  submitBtn.textContent = "送出中…";
 
   const orderItems = Object.values(cart).map((line) => {
     const item = findItem(line.itemId);
@@ -941,7 +941,7 @@ async function submitOrder() {
       saved = await insertOrder({ items: orderItems, total, note, userId, isTest });
     } catch (err) {
       console.error(err);
-      alert("送出失敗，請重試 Failed to send — please try again.");
+      alert("送出失敗，請重試");
       return;
     }
 
@@ -959,8 +959,8 @@ async function submitOrder() {
     }
     const waitText =
       waitMinutes != null
-        ? `預估取餐時間 Estimated pickup: ~${waitMinutes} 分鐘 min`
-        : `預估取餐時間 Estimated pickup: 請洽店員 ask staff`;
+        ? `預估取餐時間：約 ${waitMinutes} 分鐘`
+        : `預估取餐時間：請洽店員`;
 
     try {
       // Also drop a copy into the LINE chat so it's visible there too
@@ -974,7 +974,7 @@ async function submitOrder() {
     }
 
     document.getElementById("confirm-wait").textContent = waitText;
-    document.getElementById("confirm-order-id").textContent = `訂單編號 Order #${saved.short_id}`;
+    document.getElementById("confirm-order-id").textContent = `訂單編號 #${saved.short_id}`;
 
     closeSheet();
     Object.keys(cart).forEach((id) => delete cart[id]);
@@ -984,7 +984,7 @@ async function submitOrder() {
     document.getElementById("confirm-screen").hidden = false;
   } finally {
     submitBtn.disabled = false;
-    submitBtn.textContent = "送出訂單 Send order";
+    submitBtn.textContent = "送出訂單";
   }
 }
 

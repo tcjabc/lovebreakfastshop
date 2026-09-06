@@ -172,6 +172,19 @@ Card/Reward Card feature and LINE Touch NFC tags were both
 evaluated and rejected for this reason — don't suggest either as
 the primary loyalty mechanism, only as a fallback if the custom
 build is out of scope.
+* **All user-facing display text is Chinese-only, site-wide** — this
+supersedes an earlier, narrower rule that only the total/order-number
+lines on the printed receipt were allowed to carry English. New
+UI text (buttons, dialogs, headers, alerts, printed receipts, LINE
+chat messages, the staff dashboard) should be written in Chinese
+only, not bilingual, matching the menu item names' existing
+convention. This applies to genuinely user-facing display strings —
+not code comments, `id`/`class`/variable names, or file names, which
+stay in English as normal. Two narrow exceptions: a proper noun
+embedded in an otherwise-Chinese sentence (e.g. "與LINE連動",
+"USB 連接") isn't a parallel English translation and doesn't need
+touching; `NT$` stays as the currency prefix throughout, not treated
+as English prose.
 
 ## Next steps, roughly in order
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>樂福 Orders — Staff</title>
+<title>樂福</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="staff-style.css" />
@@ -23,24 +23,24 @@
         </svg>
       </div>
       <div class="shop-header-text">
-        <h1 id="staff-shop-name">Loading…</h1>
-        <p class="staff-subtitle">訂單 Orders</p>
+        <h1 id="staff-shop-name">載入中…</h1>
+        <p class="staff-subtitle">訂單</p>
       </div>
     </div>
-    <button id="connect-printer-btn" class="connect-btn">🖨️ 連接印表機 Connect printer</button>
+    <button id="connect-printer-btn" class="connect-btn">🖨️ 連接印表機</button>
   </header>
 
   <div class="columns">
     <section class="column">
-      <h2 class="col-title pending">待處理 Pending</h2>
+      <h2 class="col-title pending">待處理</h2>
       <div id="col-pending" class="order-cards"></div>
     </section>
     <section class="column">
-      <h2 class="col-title preparing">製作中 Preparing</h2>
+      <h2 class="col-title preparing">製作中</h2>
       <div id="col-preparing" class="order-cards"></div>
     </section>
     <section class="column">
-      <h2 class="col-title ready">可取餐 Ready</h2>
+      <h2 class="col-title ready">可取餐</h2>
       <div id="col-ready" class="order-cards"></div>
     </section>
   </div>
@@ -57,7 +57,7 @@
        every 5s refresh() poll instead of snapping back open/closed
        underneath them. Hidden entirely when there's nothing to show. -->
   <details id="test-orders-section" class="test-orders-section" hidden>
-    <summary class="test-orders-heading">🧪 測試訂單 Test Orders（不會自動列印 won't auto-print）</summary>
+    <summary class="test-orders-heading">🧪 測試訂單（不會自動列印）</summary>
     <div id="col-test" class="order-cards"></div>
   </details>
 
@@ -67,7 +67,7 @@
   <div id="receipt-preview-backdrop" class="preview-backdrop" hidden></div>
   <div id="receipt-preview" class="receipt-preview" hidden aria-label="Receipt preview">
     <div class="receipt-preview-header">
-      <span>收據預覽 Receipt preview</span>
+      <span>收據預覽</span>
       <button id="receipt-preview-close" class="receipt-preview-close" aria-label="close">✕</button>
     </div>
     <div id="receipt-preview-body" class="receipt-preview-body"></div>

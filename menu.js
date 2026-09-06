@@ -36,7 +36,7 @@
 // `modifierGroups: ["someGroupId"]`.
 const modifierGroups = {
   cheeseLettuce: {
-    label: "加點 Extras",
+    label: "加點",
     type: "multi",
     options: [
       { label: "加起司", price: 10 },
@@ -44,7 +44,7 @@ const modifierGroups = {
     ],
   },
   cheeseEgg: {
-    label: "加點 Extras",
+    label: "加點",
     type: "multi",
     options: [
       { label: "加起司", price: 10 },
@@ -52,7 +52,7 @@ const modifierGroups = {
     ],
   },
   eggPancakeBase: {
-    label: "餅皮選擇 Base",
+    label: "餅皮選擇",
     type: "single",
     options: [
       { label: "原味", price: 0 },
@@ -61,7 +61,7 @@ const modifierGroups = {
     ],
   },
   hotCold: {
-    label: "冰熱選擇 Temperature",
+    label: "冰熱選擇",
     type: "single",
     options: [
       { label: "熱", price: 0 },
@@ -69,7 +69,7 @@ const modifierGroups = {
     ],
   },
   noodleSpice: {
-    label: "辣度選擇 Spice level",
+    label: "辣度選擇",
     type: "single",
     options: [
       { label: "甜辣", price: 0 },
@@ -78,7 +78,7 @@ const modifierGroups = {
     ],
   },
   eggDoneness: {
-    label: "熟度選擇 Doneness",
+    label: "熟度選擇",
     type: "single",
     options: [
       { label: "半熟", price: 0 },
@@ -90,7 +90,7 @@ const modifierGroups = {
   // existing groups fit. Same "single, $0 delta" shape as hotCold /
   // noodleSpice / eggDoneness, just a new options list.
   submarineSauce: {
-    label: "醬料選擇 Sauce",
+    label: "醬料選擇",
     type: "single",
     options: [
       { label: "莎莎醬", price: 0 },
@@ -117,7 +117,7 @@ const PRICE_UNVERIFIED = "TODO: verify against PDF — multi-column price, harde
 
 const MENU = [
   {
-    category: "吐司類 Toast",
+    category: "吐司類",
     items: [
       { id: "ts-01", name: "肉排總匯", nameEn: "", price: 80, modifierGroups: ["cheeseLettuce"] },
       { id: "ts-02", name: "招牌肉排蛋", nameEn: "", price: 55, modifierGroups: ["cheeseLettuce"] },
@@ -144,7 +144,7 @@ const MENU = [
     ],
   },
   {
-    category: "蛋餅類 Egg Pancake",
+    category: "蛋餅類",
     items: [
       // Every item here gets both the base-swap radio (原味/酥皮/抓餅) and
       // the +起司 checkbox — menu-extracted.md notes these come from the
@@ -170,7 +170,7 @@ const MENU = [
     ],
   },
   {
-    category: "墨西哥捲餅 Mexican Wrap",
+    category: "墨西哥捲餅",
     items: [
       { id: "wr-01", name: "莎莎醬肉排", nameEn: "", price: 70, modifierGroups: ["cheeseEgg"] },
       { id: "wr-02", name: "莎莎醬義式漢堡肉", nameEn: "", price: 70, modifierGroups: ["cheeseEgg"] },
@@ -181,7 +181,7 @@ const MENU = [
     ],
   },
   {
-    category: "可頌類 Croissant",
+    category: "可頌類",
     items: [
       { id: "cr-01", name: "生菜肉排", nameEn: "", price: 75, modifierGroups: ["cheeseEgg"] },
       { id: "cr-02", name: "洋蔥肉排", nameEn: "", price: 75, modifierGroups: ["cheeseEgg"] },
@@ -200,7 +200,7 @@ const MENU = [
     ],
   },
   {
-    category: "漢堡類 Burger",
+    category: "漢堡類",
     items: [
       { id: "bg-01", name: "招牌肉排蛋", nameEn: "", price: 70, modifierGroups: ["cheeseLettuce"] },
       { id: "bg-02", name: "生菜肉排蛋", nameEn: "", price: 70, modifierGroups: ["cheeseLettuce"] },
@@ -214,7 +214,7 @@ const MENU = [
     ],
   },
   {
-    category: "滿福堡 Muffin Sandwich",
+    category: "滿福堡",
     items: [
       { id: "mf-01", name: "招牌肉排蛋", nameEn: "", price: 60, modifierGroups: ["cheeseLettuce"] },
       { id: "mf-02", name: "生菜肉排蛋", nameEn: "", price: 70, modifierGroups: ["cheeseLettuce"] },
@@ -229,7 +229,7 @@ const MENU = [
     ],
   },
   {
-    category: "法式類 French Toast",
+    category: "法式類",
     items: [
       // priceThin/priceThick, not a shared modifier group — the thick
       // delta isn't flat (some items don't offer it at all). See
@@ -244,7 +244,7 @@ const MENU = [
     ],
   },
   {
-    category: "貝果類 Bagel",
+    category: "貝果類",
     items: [
       { id: "bgl-01", name: "生菜肉排", nameEn: "", price: 75, modifierGroups: ["cheeseEgg"] },
       { id: "bgl-02", name: "花生醬肉排", nameEn: "", price: 75, modifierGroups: ["cheeseEgg"] },
@@ -261,7 +261,7 @@ const MENU = [
     ],
   },
   {
-    category: "甜甜Der Sweet Toast",
+    category: "甜甜Der",
     items: [
       // priceThin/priceThick per item (see PRICE_UNVERIFIED note above)
       // plus the shared +棉花糖 marshmallow add-on on every item in
@@ -278,7 +278,7 @@ const MENU = [
     ],
   },
   {
-    category: "軟法類 Soft Baguette",
+    category: "軟法類",
     items: [
       { id: "sb-01", name: "生菜肉排", nameEn: "", price: 70, modifierGroups: ["cheeseEgg"] },
       { id: "sb-02", name: "義式漢堡肉", nameEn: "", price: 70, modifierGroups: ["cheeseEgg"] },
@@ -288,21 +288,21 @@ const MENU = [
     ],
   },
   {
-    category: "沙拉類 Salad",
+    category: "沙拉類",
     items: [
       { id: "sl-01", name: "輕食生菜肉排沙拉", nameEn: "", price: 60 },
       { id: "sl-02", name: "泰式雞肉沙拉", nameEn: "", price: 55 },
     ],
   },
   {
-    category: "潛艇堡 Submarine",
+    category: "潛艇堡",
     items: [
       { id: "sm-01", name: "招牌肉排", nameEn: "", price: 65, modifierGroups: ["submarineSauce"] },
       { id: "sm-02", name: "德式香腸", nameEn: "", price: 60, modifierGroups: ["submarineSauce"] },
     ],
   },
   {
-    category: "鐵板麵 Iron-Plate Noodles",
+    category: "鐵板麵",
     items: [
       {
         id: "np-01",
@@ -320,7 +320,7 @@ const MENU = [
     ],
   },
   {
-    category: "點心 / 炸物類 Snacks / Fried",
+    category: "點心 / 炸物類",
     items: [
       { id: "sn-01", name: "熱狗 (3條)", nameEn: "", price: 20 },
       { id: "sn-02", name: "脆薯", nameEn: "", price: 30 },
@@ -340,16 +340,16 @@ const MENU = [
     ],
   },
   {
-    category: "飲品 Drinks",
+    category: "飲品",
     items: [
-      { id: "dr-01", name: "美式咖啡", nameEn: "Americano · 120oz", price: 45, modifierGroups: ["hotCold"] },
-      { id: "dr-02", name: "拿鐵", nameEn: "Latte · 120oz", price: 60, modifierGroups: ["hotCold"] },
-      { id: "dr-03", name: "可可牛奶", nameEn: "Cocoa Milk · 120oz", price: 40, modifierGroups: ["hotCold"] },
-      { id: "dr-04", name: "Tree Top 蘋果汁", nameEn: "Apple Juice · 120oz", price: 30, modifierGroups: ["hotCold"] },
-      { id: "dr-05", name: "鮮奶茶", nameEn: "Milk Tea · 140oz", price: 35, modifierGroups: ["hotCold"] },
-      { id: "dr-06", name: "非基改豆漿", nameEn: "Non-GMO Soy Milk · 140oz", price: 25, modifierGroups: ["hotCold"] },
-      { id: "dr-07", name: "紅茶", nameEn: "Black Tea · 140oz", price: 20, modifierGroups: ["hotCold"] },
-      { id: "dr-08", name: "豆漿紅茶", nameEn: "Soy Milk Black Tea · 140oz", price: 25, modifierGroups: ["hotCold"] },
+      { id: "dr-01", name: "美式咖啡", nameEn: "", price: 45, modifierGroups: ["hotCold"] },
+      { id: "dr-02", name: "拿鐵", nameEn: "", price: 60, modifierGroups: ["hotCold"] },
+      { id: "dr-03", name: "可可牛奶", nameEn: "", price: 40, modifierGroups: ["hotCold"] },
+      { id: "dr-04", name: "Tree Top 蘋果汁", nameEn: "", price: 30, modifierGroups: ["hotCold"] },
+      { id: "dr-05", name: "鮮奶茶", nameEn: "", price: 35, modifierGroups: ["hotCold"] },
+      { id: "dr-06", name: "非基改豆漿", nameEn: "", price: 25, modifierGroups: ["hotCold"] },
+      { id: "dr-07", name: "紅茶", nameEn: "", price: 20, modifierGroups: ["hotCold"] },
+      { id: "dr-08", name: "豆漿紅茶", nameEn: "", price: 25, modifierGroups: ["hotCold"] },
     ],
   },
 ];
