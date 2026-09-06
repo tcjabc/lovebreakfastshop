@@ -160,6 +160,37 @@ insert into feature_flags (line_user_id, is_tester) values ('U1234...', true);
 only turned on `chat_message.write`) — without it, `liff.getProfile()`
 throws for everyone, tester or not.
 
+### Members + test-order flagging (also part of the LIFF login rollout)
+
+Same SQL editor, run alongside (or after) the `feature_flags` setup
+above:
+
+```sql
+alter table orders add column user_id text;
+alter table orders add column is_test boolean not null default false;
+
+create table members (
+  user_id text primary key,
+  display_name text,
+  picture_url text,
+  last_seen_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+alter table members enable row level security;
+
+-- Same permissive shape as `orders` — a tester's own device writes
+-- this row directly via the publishable key, no server in between.
+create policy "allow all" on members for all using (true) with check (true);
+```
+
+Once this is in place: a tester's checkout (see above) stamps
+`orders.user_id`/`is_test` and upserts a `members` row automatically —
+nothing further to configure. `staff.html`'s dashboard keeps
+`is_test = true` orders out of the three live columns and out of
+auto-print, showing them instead in their own "🧪 Test Orders" section
+so they're still checkable by hand.
+
 ## Step 7 — Set up the staff tablet
 
 1. On the Android tablet, open **Chrome** and go to your Netlify URL +

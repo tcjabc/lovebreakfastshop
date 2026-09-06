@@ -22,7 +22,10 @@ function makeShortId() {
   );
 }
 
-async function insertOrder({ items, total, note }) {
+// userId/isTest are only ever non-null/true for a tester (see
+// maybeTesterLogin() in app.js) — for everyone else these are
+// null/false exactly as before this column pair existed.
+async function insertOrder({ items, total, note, userId, isTest }) {
   const shortId = makeShortId();
   const { data, error } = await supabaseClient
     .from("orders")
@@ -33,6 +36,8 @@ async function insertOrder({ items, total, note }) {
         total,
         note: note || null,
         status: "pending",
+        user_id: userId || null,
+        is_test: Boolean(isTest),
       },
     ])
     .select()
@@ -40,6 +45,29 @@ async function insertOrder({ items, total, note }) {
 
   if (error) throw error;
   return data;
+}
+
+// Upsert-only member record, keyed to the LINE user id — insert on
+// first sight, otherwise refresh the display fields + last_seen_at
+// without touching created_at. Called once per checkout for a logged-
+// in tester (see maybeTesterLogin()/submitOrder() in app.js). Never
+// throws — a members-table hiccup shouldn't be able to block an order
+// from going through, same reasoning as every other LIFF-adjacent call
+// in this app.
+async function upsertMember(profile) {
+  const { error } = await supabaseClient.from("members").upsert(
+    {
+      user_id: profile.userId,
+      display_name: profile.displayName,
+      picture_url: profile.pictureUrl || null,
+      last_seen_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    console.error("[Members] upsert failed", error);
+  }
 }
 
 async function getQueueCount() {

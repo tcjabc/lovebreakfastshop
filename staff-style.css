@@ -111,6 +111,31 @@ body {
 .col-title.preparing { color: var(--gold-dark); }
 .col-title.ready { color: var(--color-primary); }
 
+/* Dashed border (vs. the live columns' solid cards) so this reads as
+   "not the real queue" at a glance. No unconditional `display` here —
+   staff.js toggles the section's [hidden] attribute in JS, and this
+   repo has already been bitten once by a CSS `display` rule silently
+   overriding [hidden] (see CLAUDE.md's hidden/toggle bug note). */
+.test-orders-section {
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 2px dashed var(--color-primary);
+  border-radius: 14px;
+  background: var(--color-bg-alt);
+}
+
+/* <summary> — collapsed by default (see staff.html); the browser's
+   own disclosure triangle is left in place as the expand/collapse
+   affordance rather than replaced with something custom. */
+.test-orders-heading {
+  margin: 4px 6px 12px;
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--color-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
 .order-cards {
   display: flex;
   flex-direction: column;

@@ -249,8 +249,17 @@ function closePreview() {
 async function refresh() {
   const orders = await fetchOrders();
 
+  // Test orders (is_test = true, stamped by the tester-gated LIFF
+  // login flow in app.js — see supabase-config.js's insertOrder())
+  // never mix into the live kitchen queue or its auto-print sweep;
+  // they render in their own section below instead. Split once here
+  // rather than filtering in the DB query so both views come from the
+  // same poll tick and can't drift out of sync with each other.
+  const liveOrders = orders.filter((o) => !o.is_test);
+  const testOrders = orders.filter((o) => o.is_test);
+
   const columns = { pending: [], preparing: [], ready: [] };
-  orders.forEach((o) => {
+  liveOrders.forEach((o) => {
     if (columns[o.status]) columns[o.status].push(o);
   });
 
@@ -260,7 +269,15 @@ async function refresh() {
     columns[status].forEach((order) => container.appendChild(buildCard(order)));
   });
 
-  autoPrintPendingOrders(orders);
+  const testContainer = document.getElementById("col-test");
+  testContainer.innerHTML = "";
+  testOrders.forEach((order) => testContainer.appendChild(buildCard(order)));
+  // Only take up screen space when there's actually something to
+  // check — see the [hidden]-vs-CSS-display note in CLAUDE.md before
+  // giving .test-orders-section an unconditional `display` anywhere.
+  document.getElementById("test-orders-section").hidden = testOrders.length === 0;
+
+  autoPrintPendingOrders(liveOrders); // test orders are never auto-printed
 }
 
 document.getElementById("staff-shop-name").textContent = SHOP_INFO ? SHOP_INFO.name : "Orders";

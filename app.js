@@ -656,18 +656,19 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
   };
 }
 
-// Tester-gated LIFF login smoke test — see isTesterMode() in
-// supabase-config.js for the single gate this depends on (don't add a
-// second tester check anywhere else). Non-testers must see zero
-// difference here: this function never shows anything, delays
-// checkout, or blocks it — every await is wrapped so a failure
-// anywhere just logs and checkout proceeds exactly as before.
+// Tester-gated LIFF login — see isTesterMode() in supabase-config.js
+// for the single gate this depends on (don't add a second tester
+// check anywhere else). Non-testers must see zero difference here:
+// this function never shows anything, delays checkout, or blocks it —
+// every await is wrapped so a failure anywhere just logs and checkout
+// proceeds exactly as before, with the same { userId: null, isTest:
+// false, profile: null } result a non-tester gets.
 //
-// Doesn't attach the resulting profile to the order yet (the `orders`
-// table has no identity column — see CLAUDE.md) — this only proves
-// isLoggedIn()/login()/getProfile() actually work end-to-end for a
-// real tester before the flow becomes mandatory for everyone.
+// Returns the identity submitOrder() needs to upsert the members row
+// and stamp user_id/is_test onto the order — userId/profile are only
+// ever populated for a tester; everyone else gets nulls/false.
 async function maybeTesterLogin() {
+  const result = { userId: null, isTest: false, profile: null };
   try {
     // Safe, silent peek: inside the LINE app LIFF auto-logs in during
     // liff.init() with no visible prompt, so this already succeeds
@@ -680,7 +681,7 @@ async function maybeTesterLogin() {
       userId = profile.userId;
     }
 
-    if (!(await isTesterMode(userId))) return; // unchanged checkout for everyone else
+    if (!(await isTesterMode(userId))) return result; // unchanged checkout for everyone else
 
     // Only testers ever reach here, so only testers can ever hit
     // liff.login()'s visible consent/redirect (relevant mainly
@@ -688,17 +689,27 @@ async function maybeTesterLogin() {
     // isLoggedIn() above is already true).
     if (!liff.isLoggedIn()) {
       liff.login();
-      return; // liff.login() navigates away — nothing after this runs
+      return result; // liff.login() navigates away — nothing after this runs
     }
     const profile = await liff.getProfile();
     console.log(`[Tester] LIFF login flow OK — ${profile.displayName} (${profile.userId})`);
+    result.userId = profile.userId;
+    result.isTest = true;
+    result.profile = profile;
   } catch (err) {
     console.error("[Tester] maybeTesterLogin failed — checkout continues unaffected", err);
   }
+  return result;
 }
 
 async function submitOrder() {
-  await maybeTesterLogin();
+  const { userId, isTest, profile } = await maybeTesterLogin();
+  if (profile) {
+    // Testers only (profile is only ever set above for a tester) —
+    // awaited so a "did the members row land" check right after
+    // placing a test order is reliable, not a race.
+    await upsertMember(profile);
+  }
 
   const submitBtn = document.getElementById("submit-order");
   submitBtn.disabled = true;
@@ -725,7 +736,7 @@ async function submitOrder() {
       // Save the order to Supabase — this is the source of truth for
       // status tracking and printing at the shop. Only a failure here
       // means nothing was saved and a retry is the right call.
-      saved = await insertOrder({ items: orderItems, total, note });
+      saved = await insertOrder({ items: orderItems, total, note, userId, isTest });
     } catch (err) {
       console.error(err);
       alert("送出失敗，請重試 Failed to send — please try again.");

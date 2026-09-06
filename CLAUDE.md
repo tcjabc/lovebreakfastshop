@@ -39,7 +39,10 @@ NOT work for `staff.html` — WebUSB requires a secure context
 ## Backend: Supabase
 
 Free-tier Supabase project already created (`lovebreakfastshop`,
-Asia-Pacific/Tokyo region). Single table:
+Asia-Pacific/Tokyo region). Three tables now (`orders` grew two
+columns beyond its original shape; `feature_flags` and `members` were
+added later) — this block documents the **current live schema**, not
+just what's in the original migration SQL in README.md:
 
 ```sql
 create table orders (
@@ -49,12 +52,43 @@ create table orders (
   total int not null,
   note text,
   status text not null default 'pending',
+  created\_at timestamptz not null default now(),
+  printed boolean not null default false,      -- staff auto-print tracking
+  user\_id text,                                -- LINE user id; null unless a tester (see below)
+  is\_test boolean not null default false        -- true only for tester-placed orders
+);
+
+create table feature\_flags (
+  line\_user\_id text primary key,
+  is\_tester boolean not null default false,
+  created\_at timestamptz not null default now()
+);
+
+create table members (
+  user\_id text primary key,
+  display\_name text,
+  picture\_url text,
+  last\_seen\_at timestamptz,
   created\_at timestamptz not null default now()
 );
 ```
 
-RLS is enabled with a permissive `allow all` policy (`using (true) with check (true)`) — fine for a single-shop app with no auth. If auth is
-ever added (see Loyalty section below), tighten this.
+`orders.user_id`/`is_test` and the whole `members` table were added
+directly in the Supabase SQL editor (not by running any SQL committed
+to this repo) ahead of asking for the app code that uses them — so if
+you're setting up a fresh project from README.md's Step 6 alone,
+you'll also need the `feature_flags` SQL in README.md's "Feature
+flags (tester gating)" section, plus the `orders` column additions and
+`members` table above (not yet mirrored into README.md's copy-paste
+setup steps).
+
+RLS is enabled on all three tables. `orders` and `members` use a
+permissive `allow all` policy (`using (true) with check (true)`);
+`feature_flags` is read-only for the anon key by design (see
+README.md — toggling a tester is meant to require a manual Supabase
+edit, never something the app itself can do). Fine for a single-shop
+app with no auth. If auth is ever added (see Loyalty section below),
+tighten this.
 
 `supabase-config.js` uses Supabase's newer key naming: the
 **publishable key** (`sb\_publishable\_...`), not the legacy anon key —
@@ -70,33 +104,36 @@ this repo.
 was stale, not current. `liff.isInClient()` still guards
 `liff.sendMessages()`/`liff.closeWindow()` so the app degrades
 gracefully outside LINE.
-* **`liff.getProfile()` now exists, but only behind a tester gate —
-orders are still fully anonymous for everyone else.**
-`maybeTesterLogin()` in `app.js` (called at the top of
-`submitOrder()`) does `liff.isLoggedIn()` → `liff.login()` if
-needed → `liff.getProfile()`, but only for a user `isTesterMode()`
-(in `supabase-config.js`) says is a tester — everyone else's
-checkout is untouched, no login prompt. This is a smoke test for
-the login mechanics ahead of Loyalty (step 5 below); the resulting
-profile isn't attached to the order yet (`orders` has no identity
-column — see schema above).
+* **`liff.getProfile()` now exists, and IS wired into `orders`/
+`members` — but still only behind a tester gate.** `maybeTesterLogin()`
+in `app.js` (called at the top of `submitOrder()`) does
+`liff.isLoggedIn()` → `liff.login()` if needed → `liff.getProfile()`,
+but only for a user `isTesterMode()` (in `supabase-config.js`) says is
+a tester — everyone else's checkout is untouched, no login prompt,
+`orders.user_id` stays null, `orders.is_test` stays false, no
+`members` row is touched. For a tester, `submitOrder()` awaits
+`upsertMember(profile)` (insert-or-refresh `display_name`/
+`picture_url`/`last_seen_at`, never touches `created_at` on an
+existing row) and passes `userId`/`isTest` into `insertOrder()`.
 * **The tester gate — `isTesterMode(userId)` in `supabase-config.js`
 — is the ONLY place in the codebase that should ever decide "is
-this user a tester."** Backed by a `feature_flags` table
-(`line_user_id` primary key, `is_tester` boolean; see README.md →
-"Feature flags (tester gating)" for the SQL/RLS). Toggling a tester
-is a Supabase row edit, never a code change. When the login flow
-ships for everyone, delete `isTesterMode()` and its one call site
-in `maybeTesterLogin()` rather than leaving it in place unused.
+this user a tester."** Backed by the `feature_flags` table above.
+Toggling a tester is a Supabase row edit, never a code change. When
+the login flow ships for everyone, delete `isTesterMode()` and its
+one call site in `maybeTesterLogin()` — but keep the `userId`/
+`isTest` plumbing into `insertOrder()`/`upsertMember()`, since that
+part becomes correct-for-everyone once nothing gates it anymore, not
+dead code to remove.
 * The LIFF channel's scopes only had `chat_message.write` enabled
-(see README.md Step 3) — `profile` scope needs to be turned on in
-the LINE Developers Console before `liff.getProfile()` will work for
-anyone, tester or not. Not something this repo's code can do.
-* Bootstrapping the very first tester is manual: `isTesterMode()` can
-only recognize a LINE user id that's already been through
-`liff.getProfile()` once, so seeding that first `feature_flags` row
-needs the id obtained once outside this flow (e.g. a temporary
-`console.log` during testing) — see README.md for the exact steps.
+(see README.md Step 3) — `profile` scope was turned on in the LINE
+Developers Console to get this far; if `liff.getProfile()` ever
+starts failing for everyone, tester or not, check that scope first.
+* The first tester was bootstrapped via a temporary `console.log`
+block in `app.js`'s `init()` (added in commit `339c639`, made active
+in `68fc439`, removed in `edac663`) — that block is gone now that
+`feature_flags` has its first real row; don't re-add it as a
+permanent fixture if a second tester needs bootstrapping later,
+re-add-then-remove it the same way instead.
 
 ## Hidden/toggle bug pattern (context for git history)
 
@@ -168,16 +205,17 @@ real hosted URL exists, and swap the real `LIFF\_ID` into `app.js`.
 4. **Tune `AVG\_MINUTES\_PER\_ITEM` / `QUEUE\_BUFFER\_MINUTES`** in
 `supabase-config.js` once there's a week or two of real prep-time
 data — current values are starting guesses.
-5. **(Later) Loyalty system** — a first slice of this exists now,
+5. **(Later) Loyalty system** — more of this exists now, still
 tester-gated (see "LINE integration status" above):
-`liff.login()`/`getProfile()` runs end-to-end at checkout, but only
-for a user flagged in `feature_flags`, and the profile isn't
-persisted anywhere yet. Still to do: a `members` table
-(`line\_user\_id`, `points`, `total\_orders`) keyed to the LINE user
-ID, auto-increment on order insert, a checkout-time
-reward-application step, and — once the login flow is proven out —
-removing the tester gate so it applies to everyone. Additive to the
-existing schema, not a rebuild.
+`liff.login()`/`getProfile()` runs end-to-end at checkout for a
+flagged tester, `orders.user_id`/`is_test` get stamped, and a
+`members` row (`user_id`, `display_name`, `picture_url`,
+`last_seen_at`) is upserted. Still to do: `points`/`total_orders`
+columns on `members` (or a separate table — undecided), an
+auto-increment on order insert, a checkout-time reward-application
+step, and — once the login flow is proven out — removing the tester
+gate so it applies to everyone. Additive to the existing schema, not
+a rebuild.
 
 ## Things NOT to change without discussion
 

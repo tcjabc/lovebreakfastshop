@@ -45,6 +45,22 @@
     </section>
   </div>
 
+  <!-- Test orders (is_test = true) — kept out of the three live
+       columns and out of auto-print entirely (see refresh()/
+       autoPrintPendingOrders() in staff.js), but still checkable here:
+       Print/Preview/status buttons all work the same as a live order.
+       <details> so staff can collapse it out of the way during
+       service instead of it competing for attention with the live
+       queue — closed by default; staff.js only ever touches the
+       [hidden] attribute (whether it shows at all), never `open`
+       (collapsed/expanded), so a staff member's manual toggle survives
+       every 5s refresh() poll instead of snapping back open/closed
+       underneath them. Hidden entirely when there's nothing to show. -->
+  <details id="test-orders-section" class="test-orders-section" hidden>
+    <summary class="test-orders-heading">🧪 測試訂單 Test Orders（不會自動列印 won't auto-print）</summary>
+    <div id="col-test" class="order-cards"></div>
+  </details>
+
   <!-- Receipt preview — plain-text rendering of buildReceiptModel(),
        so print.js's layout/alignment can be checked without a
        physical test print. See ThermalPrinter.buildReceiptPreview. -->
