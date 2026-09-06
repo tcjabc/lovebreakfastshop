@@ -103,7 +103,8 @@ create table orders (
   total int not null,
   note text,
   status text not null default 'pending',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  printed boolean not null default false -- staff dashboard auto-print tracking
 );
 
 alter table orders enable row level security;
@@ -163,7 +164,12 @@ throws for everyone, tester or not.
 ### Members + test-order flagging (also part of the LIFF login rollout)
 
 Same SQL editor, run alongside (or after) the `feature_flags` setup
-above:
+above. This was originally run directly in the SQL editor ahead of
+committing it here; the SQL below has since been checked column-by-
+column against a real `information_schema.columns` / `pg_policies`
+query against the live database (2026-09-06) — not hand-typed from
+guesswork — so it's safe to treat as the actual current schema, not
+just an approximation of it:
 
 ```sql
 alter table orders add column user_id text;

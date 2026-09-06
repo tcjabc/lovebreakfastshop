@@ -39,56 +39,22 @@ NOT work for `staff.html` — WebUSB requires a secure context
 ## Backend: Supabase
 
 Free-tier Supabase project already created (`lovebreakfastshop`,
-Asia-Pacific/Tokyo region). Three tables now (`orders` grew two
-columns beyond its original shape; `feature_flags` and `members` were
-added later) — this block documents the **current live schema**, not
-just what's in the original migration SQL in README.md:
+Asia-Pacific/Tokyo region). Three tables: `orders`, `feature_flags`,
+`members`. **The exact schema (columns/types/defaults) and RLS
+policies live in ONE place — README.md's "Set up Supabase" steps
+(Step 6, "Feature flags," and "Members + test-order flagging") —
+deliberately not repeated here, so there's a single source instead of
+two copies that can drift out of sync. Some of that SQL was run
+directly in the Supabase SQL editor ahead of committing it anywhere;
+README.md's copy has since been confirmed to exactly match a real
+`information_schema`/`pg_policies` query against the live database
+(2026-09-06), not hand-reconstructed.**
 
-```sql
-create table orders (
-  id uuid primary key default gen\_random\_uuid(),
-  short\_id text not null,
-  items jsonb not null,
-  total int not null,
-  note text,
-  status text not null default 'pending',
-  created\_at timestamptz not null default now(),
-  printed boolean not null default false,      -- staff auto-print tracking
-  user\_id text,                                -- LINE user id; null unless a tester (see below)
-  is\_test boolean not null default false        -- true only for tester-placed orders
-);
-
-create table feature\_flags (
-  line\_user\_id text primary key,
-  is\_tester boolean not null default false,
-  created\_at timestamptz not null default now()
-);
-
-create table members (
-  user\_id text primary key,
-  display\_name text,
-  picture\_url text,
-  last\_seen\_at timestamptz,
-  created\_at timestamptz not null default now()
-);
-```
-
-`orders.user_id`/`is_test` and the whole `members` table were added
-directly in the Supabase SQL editor (not by running any SQL committed
-to this repo) ahead of asking for the app code that uses them — so if
-you're setting up a fresh project from README.md's Step 6 alone,
-you'll also need the `feature_flags` SQL in README.md's "Feature
-flags (tester gating)" section, plus the `orders` column additions and
-`members` table above (not yet mirrored into README.md's copy-paste
-setup steps).
-
-RLS is enabled on all three tables. `orders` and `members` use a
-permissive `allow all` policy (`using (true) with check (true)`);
-`feature_flags` is read-only for the anon key by design (see
-README.md — toggling a tester is meant to require a manual Supabase
-edit, never something the app itself can do). Fine for a single-shop
-app with no auth. If auth is ever added (see Loyalty section below),
-tighten this.
+RLS is enabled on all three tables: `orders`/`members` are permissive
+(`allow all`); `feature_flags` is read-only for the anon key by design
+(toggling a tester is meant to require a manual Supabase edit, never
+something the app itself can do). Fine for a single-shop app with no
+auth. If auth is ever added (see Loyalty section below), tighten this.
 
 `supabase-config.js` uses Supabase's newer key naming: the
 **publishable key** (`sb\_publishable\_...`), not the legacy anon key —
@@ -192,20 +158,12 @@ build is out of scope.
 
 ## Next steps, roughly in order
 
-1. **Verify the hidden-bug fix** end-to-end: place a test order
-locally, confirm the customer sees the real confirmation screen
-(not stuck on it from page load), and a row lands in Supabase's
-`orders` table.
-2. **Deploy to Cloudflare Pages**, not Netlify — Netlify's free tier
-tightened significantly in 2026 (now credit-based, \~15GB effective
-bandwidth); Cloudflare Pages remains unmetered for static assets
-and is the better free fit for this project.
-3. **Create the real LIFF app** in the LINE Developers Console once a
+1. **Create the real LIFF app** in the LINE Developers Console once a
 real hosted URL exists, and swap the real `LIFF\_ID` into `app.js`.
-4. **Tune `AVG\_MINUTES\_PER\_ITEM` / `QUEUE\_BUFFER\_MINUTES`** in
+2. **Tune `AVG\_MINUTES\_PER\_ITEM` / `QUEUE\_BUFFER\_MINUTES`** in
 `supabase-config.js` once there's a week or two of real prep-time
 data — current values are starting guesses.
-5. **(Later) Loyalty system** — more of this exists now, still
+3. **(Later) Loyalty system** — more of this exists now, still
 tester-gated (see "LINE integration status" above):
 `liff.login()`/`getProfile()` runs end-to-end at checkout for a
 flagged tester, `orders.user_id`/`is_test` get stamped, and a
