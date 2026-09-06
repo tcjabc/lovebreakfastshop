@@ -200,6 +200,114 @@ nothing further to configure. `staff.html`'s dashboard keeps
 auto-print, showing them instead in their own "🧪 Test Orders" section
 so they're still checkable by hand.
 
+### Stored Value (backend only — no staff/checkout UI yet)
+
+Backend for a per-member stored-value balance: a `members.user_id`-keyed
+account with an append-only transaction log, moved only through two
+`security definer` Postgres functions (never a direct table write from
+the app). Run this in the same SQL editor, after `members` above (both
+tables reference it via foreign key):
+
+```sql
+create table public.stored_value_accounts (
+  user_id text not null,
+  balance integer not null default 0,
+  updated_at timestamp with time zone not null default now(),
+  constraint stored_value_accounts_pkey primary key (user_id),
+  constraint stored_value_accounts_user_id_fkey foreign KEY (user_id) references members (user_id)
+) TABLESPACE pg_default;
+
+create table public.stored_value_transactions (
+  id uuid not null default gen_random_uuid (),
+  user_id text not null,
+  amount integer not null,
+  type text not null,
+  order_id text null,
+  staff_note text null,
+  created_at timestamp with time zone not null default now(),
+  constraint stored_value_transactions_pkey primary key (id),
+  constraint stored_value_transactions_user_id_fkey foreign KEY (user_id) references stored_value_accounts (user_id),
+  constraint stored_value_transactions_type_check check (
+    (
+      type = any (
+        array['topup'::text, 'deduction'::text, 'refund'::text]
+      )
+    )
+  )
+) TABLESPACE pg_default;
+
+-- RLS enabled with ZERO policies on both tables, deliberately — unlike
+-- orders/members ("allow all") or feature_flags (read-only), nothing
+-- here should be reachable via the anon/publishable key at all, not
+-- even a read. Only the service-role key (used exclusively by the
+-- three Stored Value Edge Functions below) can touch these tables;
+-- service_role bypasses RLS entirely in Supabase, so it's unaffected
+-- by the lack of policies here.
+alter table stored_value_accounts enable row level security;
+alter table stored_value_transactions enable row level security;
+
+-- Deducts only if funds cover it; single statement, row-locked, so two
+-- simultaneous spend attempts can't both succeed against the same balance.
+create or replace function spend_stored_value(p_user_id text, p_amount int, p_order_id text)
+returns int
+language plpgsql
+security definer
+as $$
+declare v_new_balance int;
+begin
+  update stored_value_accounts
+    set balance = balance - p_amount, updated_at = now()
+    where user_id = p_user_id and balance >= p_amount
+    returning balance into v_new_balance;
+  if v_new_balance is null then
+    raise exception 'insufficient_funds';
+  end if;
+  insert into stored_value_transactions (user_id, amount, type, order_id)
+    values (p_user_id, -p_amount, 'deduction', p_order_id);
+  return v_new_balance;
+end;
+$$;
+
+create or replace function topup_stored_value(p_user_id text, p_amount int, p_staff_note text)
+returns int
+language plpgsql
+security definer
+as $$
+declare v_new_balance int;
+begin
+  insert into stored_value_accounts (user_id, balance)
+    values (p_user_id, p_amount)
+    on conflict (user_id) do update
+      set balance = stored_value_accounts.balance + p_amount, updated_at = now()
+    returning balance into v_new_balance;
+  insert into stored_value_transactions (user_id, amount, type, staff_note)
+    values (p_user_id, p_amount, 'topup', p_staff_note);
+  return v_new_balance;
+end;
+$$;
+
+revoke execute on function spend_stored_value from public, anon, authenticated;
+revoke execute on function topup_stored_value from public, anon, authenticated;
+-- service_role retains execute by default — only the Edge Functions can call these.
+```
+
+Three Edge Functions call this (source in `supabase/functions/`), each
+verifying identity first via the shared `_shared/verifyLineToken.ts` /
+`_shared/verifyStaffPin.ts` helpers (see the LINE integration section
+above) before touching money:
+
+- **`get-stored-value-balance`** — verifies the caller's LIFF ID token,
+  reads their balance. No account row yet (never topped up) reads as
+  balance 0, not an error.
+- **`spend-stored-value`** — verifies the LIFF ID token, calls
+  `spend_stored_value()`. Returns a distinct `insufficient_funds` error
+  code (not a generic failure) if the balance doesn't cover it.
+- **`topup-stored-value`** — verifies a staff PIN (`STAFF_PIN` secret,
+  same as elsewhere), calls `topup_stored_value()` for a `user_id`
+  passed directly in the request. No staff search UI yet to pick a
+  member from — that, checkout-time spending, and refund wiring are
+  separate, later slices, not part of this backend pass.
+
 ## Step 7 — Set up the staff tablet
 
 1. On the Android tablet, open **Chrome** and go to your Netlify URL +

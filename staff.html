@@ -28,6 +28,7 @@
       </div>
     </div>
     <button id="connect-printer-btn" class="connect-btn">🖨️ 連接印表機</button>
+    <button id="stored-value-btn" class="connect-btn stored-value-btn">💰 會員儲值</button>
   </header>
 
   <div class="columns">
@@ -72,6 +73,57 @@
     </div>
     <div id="receipt-preview-body" class="receipt-preview-body"></div>
   </div>
+
+  <!-- 會員儲值 (Stored Value) — opened by #stored-value-btn
+       (staff.js: openStoredValuePanel()). Three sub-views toggled via
+       [hidden] inside one sheet: search → confirm → success. Search
+       hits `members` directly with the publishable key (RLS already
+       permissive there, unchanged by this work); balance lookups and
+       the actual top-up both go through PIN-gated Edge Functions
+       (get-stored-value-balance-staff / topup-stored-value) — staff
+       have no LINE identity of their own to gate on, unlike the
+       customer-facing balance/spend functions. Closing via ✕/backdrop
+       or finishing via "完成" both route through the same
+       closeStoredValuePanel(), which always resets state — no stale
+       search results, selected member, amount, or PIN left over for
+       the next use. -->
+  <div id="sv-backdrop" class="sheet-backdrop" hidden></div>
+  <section id="sv-panel" class="checkout-sheet" hidden aria-label="會員儲值">
+    <div class="sheet-handle"></div>
+    <div class="sv-panel-header">
+      <button id="sv-back" class="sv-back-inactive" aria-label="back">←</button>
+      <h2 id="sv-panel-title">會員儲值</h2>
+      <button id="sv-close" aria-label="close">✕</button>
+    </div>
+
+    <div id="sv-search-view">
+      <input id="sv-search-input" class="note-input" type="text" placeholder="搜尋會員姓名" autocomplete="off" />
+      <div id="sv-results" class="sv-results"></div>
+    </div>
+
+    <div id="sv-confirm-view" hidden>
+      <div class="sv-member-card">
+        <img id="sv-member-photo" class="sv-member-photo" alt="" hidden />
+        <div id="sv-member-photo-placeholder" aria-hidden="true"></div>
+        <div id="sv-member-name" class="sv-member-name"></div>
+      </div>
+      <div id="sv-balance-row" class="sv-balance-row">輸入PIN碼即可查詢餘額</div>
+
+      <label class="note-label" for="sv-pin-input">員工PIN碼</label>
+      <input id="sv-pin-input" class="note-input" type="password" inputmode="numeric" placeholder="PIN碼" autocomplete="off" />
+
+      <label class="note-label" for="sv-amount-input">儲值金額</label>
+      <input id="sv-amount-input" class="note-input" type="number" min="1" step="1" placeholder="NT$" />
+
+      <div id="sv-error" class="sv-error" hidden></div>
+      <button id="sv-submit" class="submit-btn">確認儲值</button>
+    </div>
+
+    <div id="sv-success-view" hidden>
+      <p id="sv-success-message" class="sv-success-message"></p>
+      <button id="sv-done" class="submit-btn">完成</button>
+    </div>
+  </section>
 
   <template id="order-card-template">
     <div class="order-card">

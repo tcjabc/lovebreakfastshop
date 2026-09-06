@@ -332,6 +332,270 @@ body {
   margin-top: 0;
 }
 
+/* ============================================================
+   會員儲值 (Stored Value) — staff-only top-up flow.
+   Dialog primitives (.sheet-backdrop/.checkout-sheet/.sheet-handle,
+   .note-label/.note-input, .submit-btn) are copied from the customer
+   app's style.css rather than shared via a <link>, since staff.html
+   doesn't load that stylesheet — same design tokens (:root above
+   matches style.css's palette), just duplicated here. Keep the two
+   in sync by hand if the shared look ever changes.
+   ============================================================ */
+
+.stored-value-btn {
+  margin-left: 8px;
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 33, 28, 0.4);
+  z-index: 30;
+}
+
+.checkout-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--color-bg-alt);
+  border-radius: 20px 20px 0 0;
+  padding: 10px 20px 24px;
+  z-index: 31;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.15);
+}
+
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--clay-line);
+  border-radius: 2px;
+  margin: 6px auto 14px;
+}
+
+.sv-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sv-panel-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 18px;
+  color: var(--color-text);
+  text-align: center;
+}
+
+/* Title stays centered whether or not the back button applies —
+   #sv-back keeps its layout space via visibility (not [hidden], which
+   would remove it from the flex row and shift the title off-center)
+   when toggled inactive in JS. */
+.sv-back-inactive {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.sv-panel-header button {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  color: var(--color-text);
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 4px;
+  flex-shrink: 0;
+  width: 24px;
+}
+
+.note-label {
+  display: block;
+  font-size: 13px;
+  margin: 14px 0 6px;
+  opacity: 0.7;
+}
+
+.note-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--clay-line);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  background: white;
+}
+
+.submit-btn {
+  width: 100%;
+  margin-top: 16px;
+  padding: 15px;
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-family: inherit;
+  font-weight: 900;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.submit-btn:active {
+  background: var(--color-primary-hover);
+}
+
+.submit-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sv-results {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.sv-result-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--clay-line);
+  cursor: pointer;
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  text-align: left;
+  font-family: inherit;
+  width: 100%;
+}
+
+.sv-result-row:last-of-type {
+  border-bottom: none;
+}
+
+.sv-result-row:active {
+  background: rgba(43, 33, 28, 0.06);
+}
+
+.sv-result-photo,
+.sv-avatar-placeholder {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+.sv-avatar-placeholder {
+  background: rgba(43, 33, 28, 0.06);
+  border: 1.6px dashed rgba(43, 33, 28, 0.4);
+}
+
+.sv-result-info {
+  min-width: 0; /* lets sv-result-name truncate instead of overflowing the row */
+}
+
+.sv-result-name {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sv-result-last-seen {
+  font-size: 12px;
+  color: var(--color-text);
+  opacity: 0.6;
+  margin-top: 2px;
+}
+
+.sv-empty-note {
+  padding: 16px 4px;
+  font-size: 13.5px;
+  color: var(--color-text);
+  opacity: 0.6;
+  text-align: center;
+}
+
+.sv-member-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0 4px;
+}
+
+.sv-member-photo,
+#sv-member-photo-placeholder {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+#sv-member-photo-placeholder {
+  background: rgba(43, 33, 28, 0.06);
+  border: 1.6px dashed rgba(43, 33, 28, 0.4);
+}
+
+.sv-member-name {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--color-text);
+}
+
+.sv-balance-row {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: white;
+  border: 1.5px solid var(--clay-line);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.sv-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+/* Wrong PIN — same red as the rest of the app's primary/error color,
+   a straightforward "you did something, try again" tone. */
+.sv-error.pin {
+  background: rgba(224, 19, 43, 0.1);
+  color: var(--color-primary);
+}
+
+/* Network/unexpected failure — deliberately a different color (amber,
+   already used for order notes/pending-column elsewhere in this file)
+   plus a distinct leading icon, so this can never be mistaken for
+   "you mistyped the PIN" at a glance. */
+.sv-error.generic {
+  background: rgba(201, 124, 30, 0.12);
+  color: var(--amber);
+}
+
+.sv-success-message {
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--color-text);
+  text-align: center;
+  padding: 12px 4px 4px;
+}
+
 @media (max-width: 720px) {
   .columns {
     grid-template-columns: 1fr;

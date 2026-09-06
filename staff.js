@@ -296,5 +296,325 @@ document.getElementById("connect-printer-btn").addEventListener("click", async (
   }
 });
 
+// ============================================================
+// 會員儲值 (Stored Value) — staff-only search → confirm → top-up flow.
+// Search reads `members` directly (RLS already permissive there, via
+// the existing publishable-key supabaseClient). Balance lookups and
+// the actual top-up both go through PIN-gated Edge Functions
+// (get-stored-value-balance-staff / topup-stored-value) — staff have
+// no LINE identity of their own to verify, unlike the customer-facing
+// balance/spend functions, which verify a LIFF ID token instead.
+// ============================================================
+
+const EDGE_FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
+
+let currentSvMember = null; // the member row selected in the search results, or null
+let svSearchDebounce = null;
+
+// Uniformly returns { ok, code?, error?, ... } whether the Edge
+// Function itself responded (any status — its JSON body is always
+// this shape, see supabase/functions/*/index.ts) or the request never
+// completed at all (offline, DNS, malformed response body). Callers
+// branch on `.code` the same way regardless of which case it was —
+// only the "network" code is synthesized here rather than coming from
+// the function itself.
+async function callStoredValueFunction(name, payload) {
+  try {
+    const res = await fetch(`${EDGE_FUNCTIONS_BASE}/${name}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    try {
+      return await res.json();
+    } catch {
+      return { ok: false, code: "network", error: "伺服器回應格式錯誤" };
+    }
+  } catch (err) {
+    console.error(`[StoredValue] ${name} request failed`, err);
+    return { ok: false, code: "network", error: "網路連線失敗" };
+  }
+}
+
+function showSvError(kind, message) {
+  const el = document.getElementById("sv-error");
+  el.className = `sv-error ${kind}`; // "pin" or "generic" — see staff-style.css for how these read differently
+  el.textContent = message;
+  el.hidden = false;
+}
+
+function hideSvError() {
+  document.getElementById("sv-error").hidden = true;
+}
+
+// Switches the panel between its three sub-views and keeps the header
+// (title text, back button) in sync — the only place either changes,
+// so a view and its header can't drift apart.
+function showSvView(view) {
+  document.getElementById("sv-search-view").hidden = view !== "search";
+  document.getElementById("sv-confirm-view").hidden = view !== "confirm";
+  document.getElementById("sv-success-view").hidden = view !== "success";
+
+  const back = document.getElementById("sv-back");
+  const close = document.getElementById("sv-close");
+  const title = document.getElementById("sv-panel-title");
+
+  if (view === "search") {
+    title.textContent = "會員儲值";
+    back.classList.add("sv-back-inactive");
+    close.hidden = false;
+  } else if (view === "confirm") {
+    title.textContent = "確認儲值對象";
+    back.classList.remove("sv-back-inactive");
+    close.hidden = false;
+  } else {
+    title.textContent = "儲值成功";
+    back.classList.add("sv-back-inactive");
+    close.hidden = true; // success only closes via 完成 — one path back to a reset state, not two
+  }
+}
+
+function resetStoredValueState() {
+  currentSvMember = null;
+  document.getElementById("sv-search-input").value = "";
+  document.getElementById("sv-results").innerHTML = "";
+  document.getElementById("sv-pin-input").value = "";
+  document.getElementById("sv-amount-input").value = "";
+  document.getElementById("sv-balance-row").textContent = "輸入PIN碼即可查詢餘額";
+  hideSvError();
+  showSvView("search");
+}
+
+function openStoredValuePanel() {
+  resetStoredValueState(); // always open on a clean slate, never whatever a previous use left behind
+  document.getElementById("sv-backdrop").hidden = false;
+  document.getElementById("sv-panel").hidden = false;
+  document.getElementById("sv-search-input").focus();
+}
+
+// The one path back to closed, from ✕, the backdrop, or 完成 alike —
+// always resets state, so nothing about a finished or abandoned
+// attempt (search text, selected member, amount, PIN) lingers into
+// the next time staff opens this panel.
+function closeStoredValuePanel() {
+  document.getElementById("sv-backdrop").hidden = true;
+  document.getElementById("sv-panel").hidden = true;
+  resetStoredValueState();
+}
+
+function formatLastSeen(isoString) {
+  if (!isoString) return "尚無使用紀錄";
+  const d = new Date(isoString);
+  return `最近使用：${d.toLocaleString("zh-TW", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
+function renderSvResults(members) {
+  const resultsEl = document.getElementById("sv-results");
+  resultsEl.innerHTML = "";
+
+  if (!members || members.length === 0) {
+    const note = document.createElement("div");
+    note.className = "sv-empty-note";
+    note.textContent = "找不到符合的會員";
+    resultsEl.appendChild(note);
+    return;
+  }
+
+  members.forEach((member) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "sv-result-row";
+
+    if (member.picture_url) {
+      const img = document.createElement("img");
+      img.className = "sv-result-photo";
+      img.src = member.picture_url;
+      img.alt = "";
+      row.appendChild(img);
+    } else {
+      const placeholder = document.createElement("div");
+      placeholder.className = "sv-avatar-placeholder";
+      row.appendChild(placeholder);
+    }
+
+    const info = document.createElement("div");
+    info.className = "sv-result-info";
+
+    const name = document.createElement("div");
+    name.className = "sv-result-name";
+    name.textContent = member.display_name || "（未命名會員）";
+    info.appendChild(name);
+
+    const lastSeen = document.createElement("div");
+    lastSeen.className = "sv-result-last-seen";
+    lastSeen.textContent = formatLastSeen(member.last_seen_at);
+    info.appendChild(lastSeen);
+
+    row.appendChild(info);
+    row.addEventListener("click", () => selectMember(member));
+    resultsEl.appendChild(row);
+  });
+}
+
+async function searchMembers(query) {
+  const { data, error } = await supabaseClient
+    .from("members")
+    .select("user_id,display_name,picture_url,last_seen_at")
+    .ilike("display_name", `%${query}%`)
+    .order("last_seen_at", { ascending: false })
+    .limit(20);
+
+  if (error) {
+    console.error("[StoredValue] member search failed", error);
+    const resultsEl = document.getElementById("sv-results");
+    resultsEl.innerHTML = "";
+    const note = document.createElement("div");
+    note.className = "sv-empty-note";
+    note.textContent = "搜尋失敗，請稍後再試";
+    resultsEl.appendChild(note);
+    return;
+  }
+
+  renderSvResults(data);
+}
+
+// Photo + name shown prominently is the safety net against crediting
+// the wrong person when multiple search results come back — see the
+// panel's aria-label / the comment above the markup in staff.html.
+function selectMember(member) {
+  currentSvMember = member;
+  document.getElementById("sv-pin-input").value = "";
+  document.getElementById("sv-amount-input").value = "";
+  document.getElementById("sv-balance-row").textContent = "輸入PIN碼即可查詢餘額";
+  hideSvError();
+
+  const photo = document.getElementById("sv-member-photo");
+  const placeholder = document.getElementById("sv-member-photo-placeholder");
+  if (member.picture_url) {
+    photo.src = member.picture_url;
+    photo.hidden = false;
+    placeholder.hidden = true;
+  } else {
+    photo.hidden = true;
+    placeholder.hidden = false;
+  }
+  document.getElementById("sv-member-name").textContent = member.display_name || "（未命名會員）";
+
+  showSvView("confirm");
+  document.getElementById("sv-pin-input").focus();
+}
+
+// Fired on PIN blur/Enter rather than every keystroke — this is a
+// balance *lookup*, no reason to hit the function on every character
+// typed. Reuses whatever PIN ends up in the field for the eventual
+// 確認儲值 submit too, so staff only ever type it once.
+async function fetchStaffBalance() {
+  if (!currentSvMember) return;
+  const pin = document.getElementById("sv-pin-input").value.trim();
+  const balanceRow = document.getElementById("sv-balance-row");
+  if (!pin) {
+    balanceRow.textContent = "輸入PIN碼即可查詢餘額";
+    return;
+  }
+
+  balanceRow.textContent = "查詢中…";
+  const result = await callStoredValueFunction("get-stored-value-balance-staff", {
+    pin,
+    user_id: currentSvMember.user_id,
+  });
+
+  if (result.ok) {
+    balanceRow.textContent = `目前餘額：NT$${result.balance}`;
+  } else if (result.code === "invalid_pin") {
+    balanceRow.textContent = "PIN碼錯誤，無法查詢餘額";
+  } else {
+    balanceRow.textContent = "餘額查詢失敗，請稍後再試";
+  }
+}
+
+// Wrong PIN and a genuine network/unexpected failure are deliberately
+// shown as visually distinct states (see .sv-error.pin vs
+// .sv-error.generic in staff-style.css) — a PIN typo shouldn't read as
+// "something's broken," and a real failure shouldn't read as "you
+// mistyped it," so staff know which one to actually act on.
+async function submitTopup() {
+  if (!currentSvMember) return;
+
+  const pin = document.getElementById("sv-pin-input").value.trim();
+  const rawAmount = document.getElementById("sv-amount-input").value.trim();
+  const amount = Number(rawAmount);
+
+  hideSvError();
+
+  if (!pin) {
+    showSvError("generic", "請輸入PIN碼");
+    return;
+  }
+  if (!rawAmount || !Number.isInteger(amount) || amount <= 0) {
+    showSvError("generic", "請輸入正確的儲值金額");
+    return;
+  }
+
+  const submitBtn = document.getElementById("sv-submit");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "處理中…";
+
+  const result = await callStoredValueFunction("topup-stored-value", {
+    pin,
+    user_id: currentSvMember.user_id,
+    amount,
+  });
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = "確認儲值";
+
+  if (result.ok) {
+    document.getElementById(
+      "sv-success-message"
+    ).textContent = `${currentSvMember.display_name} 儲值成功，新餘額為 NT$${result.balance}`;
+    showSvView("success");
+    return;
+  }
+
+  if (result.code === "invalid_pin") {
+    showSvError("pin", "PIN碼錯誤");
+  } else {
+    showSvError("generic", "⚠️ 發生錯誤，請稍後再試");
+  }
+}
+
+document.getElementById("stored-value-btn").addEventListener("click", openStoredValuePanel);
+document.getElementById("sv-close").addEventListener("click", closeStoredValuePanel);
+document.getElementById("sv-backdrop").addEventListener("click", closeStoredValuePanel);
+document.getElementById("sv-back").addEventListener("click", () => showSvView("search"));
+document.getElementById("sv-done").addEventListener("click", closeStoredValuePanel);
+document.getElementById("sv-submit").addEventListener("click", submitTopup);
+
+document.getElementById("sv-pin-input").addEventListener("blur", fetchStaffBalance);
+document.getElementById("sv-pin-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    fetchStaffBalance();
+  }
+});
+
+document.getElementById("sv-search-input").addEventListener("input", (e) => {
+  clearTimeout(svSearchDebounce);
+  const query = e.target.value.trim();
+  if (!query) {
+    document.getElementById("sv-results").innerHTML = "";
+    return;
+  }
+  svSearchDebounce = setTimeout(() => searchMembers(query), 300);
+});
+
 refresh();
 setInterval(refresh, POLL_INTERVAL_MS);
