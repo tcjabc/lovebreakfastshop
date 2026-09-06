@@ -26,17 +26,20 @@
       <p id="shop-note" class="pickup-note"></p>
     </div>
 
-    <!-- Signed-in indicator — hidden by default, only ever shown to a
-         tester after a successful LIFF login (see showMemberBadge()
-         in app.js). Deliberately minimal (name/avatar, no dropdown) —
-         the anchor point future member features (order history,
-         points, stored value) will attach to, not the finished member
-         UI. Non-testers, or a tester before their first checkout,
-         never see this — the header looks exactly as it does today. -->
+    <!-- Signed-in indicator / "become a member" pill — exactly one of
+         these two is ever shown at a time (see syncMemberState() in
+         app.js), toggled the same [hidden]-override way as
+         .cart-bar/.confirm-screen below. Badge: shown once a silent
+         liff.isLoggedIn() check at page load finds an existing
+         session — no prompt, just reflecting a state that's already
+         true. Pill: shown otherwise; tapping it opens the benefits
+         card (#benefits-card) below, the only path (besides checkout)
+         that can trigger an actual liff.login(). -->
     <div id="member-badge" class="member-badge" hidden>
       <img id="member-avatar" class="member-avatar" alt="" hidden />
       <span id="member-name" class="member-name"></span>
     </div>
+    <button id="member-pill" class="member-pill" hidden>成為會員 Become a Member</button>
   </header>
 
   <div class="search-bar">
@@ -100,6 +103,47 @@
     </div>
     <button id="options-add" class="submit-btn">加入購物車 Add to cart</button>
     <button id="options-cancel" class="close-sheet-btn">取消 Cancel</button>
+  </section>
+
+  <!-- Member benefits — opened by tapping #member-pill (app.js:
+       openBenefitsCard()). Purely informational plus one action; the
+       X and backdrop tap both just close it (closeBenefitsCard()) with
+       zero other side effects — no flag set, nothing recorded, always
+       reopenable via the pill. Only #benefits-login calls
+       liff.login() (via loginWithLine()). -->
+  <div id="benefits-backdrop" class="sheet-backdrop" hidden></div>
+  <section id="benefits-card" class="checkout-sheet" hidden aria-label="Member benefits">
+    <div class="sheet-handle"></div>
+    <div class="benefits-header">
+      <h2>會員福利 Member Benefits</h2>
+      <button id="benefits-close" class="benefits-close-btn" aria-label="close">✕</button>
+    </div>
+    <div class="benefit-row">
+      <div class="benefit-placeholder" aria-hidden="true"></div>
+      <p class="benefit-caption">累積點數，兌換優惠與免費商品！ Accumulate reward points for special offers and free items!</p>
+    </div>
+    <div class="benefit-row">
+      <div class="benefit-placeholder" aria-hidden="true"></div>
+      <p class="benefit-caption">儲值餘額，結帳更快速，取餐無縫接軌。 Add stored value to checkout faster and enjoy seamless pickup.</p>
+    </div>
+    <div class="benefit-row">
+      <div class="benefit-placeholder" aria-hidden="true"></div>
+      <p class="benefit-caption">優先顯示最愛餐點，下次點餐更省時！ See your favourites first and save time when ordering next time!</p>
+    </div>
+    <button id="benefits-login" class="submit-btn">使用 LINE 登入 Sign in with LINE</button>
+  </section>
+
+  <!-- Checkout sign-in-or-guest choice — shown by submitOrder() (app.js)
+       for a currently-anonymous visitor who hasn't already chosen
+       guest checkout this session (see guestCheckoutChosen). Dismissing
+       via the backdrop picks neither option: the order is NOT placed,
+       same as tapping nothing. -->
+  <div id="checkout-auth-backdrop" class="sheet-backdrop" hidden></div>
+  <section id="checkout-auth-dialog" class="checkout-sheet" hidden aria-label="Sign in or continue as guest">
+    <div class="sheet-handle"></div>
+    <h2>登入或以訪客結帳 Sign in or check out as a guest</h2>
+    <button id="checkout-auth-line" class="submit-btn">使用 LINE 登入 Sign in with LINE</button>
+    <button id="checkout-auth-guest" class="close-sheet-btn">以訪客身份下單 Place order as guest</button>
   </section>
 
   <!-- Confirmation -->

@@ -657,11 +657,10 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
 }
 
 // Reveals the header's signed-in indicator (see .member-badge in
-// style.css / index.html) — only ever called for a logged-in tester
-// (from maybeTesterLogin() below), so it's never shown to anyone else.
-// Deliberately just name/avatar for now — the anchor point future
-// member features (order history, points, stored value) will attach
-// to, not the finished member UI.
+// style.css / index.html) — called once syncLoggedInProfile() below
+// has a real profile. Deliberately just name/avatar for now — the
+// anchor point future member features (order history, points, stored
+// value) will attach to, not the finished member UI.
 function showMemberBadge(profile) {
   const avatar = document.getElementById("member-avatar");
   if (profile.pictureUrl) {
@@ -672,63 +671,163 @@ function showMemberBadge(profile) {
   }
   document.getElementById("member-name").textContent = profile.displayName || "";
   document.getElementById("member-badge").hidden = false;
+  document.getElementById("member-pill").hidden = true;
 }
 
-// Tester-gated LIFF login — see isTesterMode() in supabase-config.js
-// for the single gate this depends on (don't add a second tester
-// check anywhere else). Non-testers must see zero difference here:
-// this function never shows anything, delays checkout, or blocks it —
-// every await is wrapped so a failure anywhere just logs and checkout
-// proceeds exactly as before, with the same { userId: null, isTest:
-// false, profile: null } result a non-tester gets.
-//
-// Returns the identity submitOrder() needs to upsert the members row
-// and stamp user_id/is_test onto the order — userId/profile are only
-// ever populated for a tester; everyone else gets nulls/false.
-async function maybeTesterLogin() {
-  const result = { userId: null, isTest: false, profile: null };
+// The header's other face for the same slot .member-badge occupies —
+// shown instead of the badge for anyone not currently logged in.
+// Tapping it opens the benefits card (see wireUpUI()). Same [hidden]-
+// override idiom as .member-badge/.cart-bar/.confirm-screen in
+// style.css — never give this an unconditional `display` without one.
+function showMemberPill() {
+  document.getElementById("member-pill").hidden = false;
+  document.getElementById("member-badge").hidden = true;
+}
+
+// Current session's LINE identity. isTest is decided by isTesterMode()
+// (supabase-config.js) — it no longer means "gated behind a tester
+// flag to log in at all" (login is available to everyone, by choice);
+// it only flags this specific logged-in user's orders as test orders
+// so they land in staff.html's Test Orders section instead of the
+// live kitchen queue.
+let currentMember = { userId: null, isTest: false, profile: null };
+
+// Once true, submitOrder() stops asking an anonymous visitor to choose
+// between LINE login and guest checkout for the rest of this page
+// session — in-memory only, deliberately not persisted beyond it.
+let guestCheckoutChosen = false;
+
+// Shared by syncMemberState() (silent page-load check) and
+// loginWithLine() (after an explicit tap logs someone in) — keeps
+// "what happens once we have a real profile" in one place so the two
+// call sites can't drift apart.
+async function syncLoggedInProfile(profile) {
+  console.log(`[Login] ${profile.displayName} (${profile.userId})`);
+  const isTest = await isTesterMode(profile.userId);
+  currentMember = { userId: profile.userId, isTest, profile };
+  await upsertMember(profile);
+  showMemberBadge(profile);
+}
+
+// Silent membership check — called once from init() at page load.
+// liff.isLoggedIn() alone never shows anything (it's a state read, not
+// an action), so this is safe to always run: logged in already (e.g.
+// LIFF's silent in-client auto-login, or a returning liff.login()
+// redirect) shows the badge; anyone else sees the "Become a Member"
+// pill instead. Never calls liff.login() itself — see loginWithLine()
+// for the only place that does.
+async function syncMemberState() {
   try {
-    // Safe, silent peek: inside the LINE app LIFF auto-logs in during
-    // liff.init() with no visible prompt, so this already succeeds
-    // for most in-LINE sessions without calling liff.login() at all.
-    // Outside LINE (or before any prior login), isLoggedIn() is just
-    // false here — no UI, no redirect, userId stays null.
-    let userId = null;
-    if (liff.isLoggedIn()) {
-      const profile = await liff.getProfile();
-      userId = profile.userId;
-    }
-
-    if (!(await isTesterMode(userId))) return result; // unchanged checkout for everyone else
-
-    // Only testers ever reach here, so only testers can ever hit
-    // liff.login()'s visible consent/redirect (relevant mainly
-    // outside LINE — inside LINE this branch rarely fires since
-    // isLoggedIn() above is already true).
     if (!liff.isLoggedIn()) {
-      liff.login();
-      return result; // liff.login() navigates away — nothing after this runs
+      showMemberPill();
+      return;
     }
     const profile = await liff.getProfile();
-    console.log(`[Tester] LIFF login flow OK — ${profile.displayName} (${profile.userId})`);
-    result.userId = profile.userId;
-    result.isTest = true;
-    result.profile = profile;
-    showMemberBadge(profile);
+    await syncLoggedInProfile(profile);
   } catch (err) {
-    console.error("[Tester] maybeTesterLogin failed — checkout continues unaffected", err);
+    console.error("[Login] syncMemberState failed — showing guest pill", err);
+    showMemberPill();
   }
-  return result;
+}
+
+// The ONLY place liff.login() is called — exclusively from an explicit
+// tap (the benefits card's button, or the checkout dialog's LINE
+// button), never automatically. Returns true once currentMember is
+// actually populated, meaning the caller can safely proceed attributing
+// something to this identity; false otherwise. False covers two very
+// different cases the caller must not treat the same as a green light:
+// liff.login() navigating away entirely (outside LINE — this page is
+// unloading, nothing after this in the current load matters) or a
+// genuine failure — either way, the caller should NOT silently fall
+// back to guest behavior on the visitor's behalf.
+async function loginWithLine() {
+  try {
+    if (!liff.isLoggedIn()) {
+      liff.login();
+      return false; // navigates away (outside LINE) or is mid-flight
+    }
+    // Already logged in — e.g. LIFF's silent in-client auto-login beat
+    // us to it since the pill/dialog was shown. Sync and continue
+    // synchronously instead of redirecting for no reason.
+    const profile = await liff.getProfile();
+    await syncLoggedInProfile(profile);
+    return true;
+  } catch (err) {
+    console.error("[Login] loginWithLine failed", err);
+    return false;
+  }
+}
+
+function openBenefitsCard() {
+  document.getElementById("benefits-backdrop").hidden = false;
+  document.getElementById("benefits-card").hidden = false;
+}
+
+function closeBenefitsCard() {
+  document.getElementById("benefits-backdrop").hidden = true;
+  document.getElementById("benefits-card").hidden = true;
+}
+
+// Resolves once the visitor makes a choice in the checkout auth dialog
+// — 'guest', 'line', or null if dismissed without choosing (backdrop
+// tap). Listeners are attached/detached fresh per call rather than
+// once at load, since this can legitimately run more than once in a
+// session (e.g. "Sign in with LINE" fails, they try again).
+function askCheckoutAuthChoice() {
+  return new Promise((resolve) => {
+    const backdrop = document.getElementById("checkout-auth-backdrop");
+    const dialog = document.getElementById("checkout-auth-dialog");
+    const lineBtn = document.getElementById("checkout-auth-line");
+    const guestBtn = document.getElementById("checkout-auth-guest");
+
+    function done(choice) {
+      backdrop.hidden = true;
+      dialog.hidden = true;
+      lineBtn.removeEventListener("click", onLine);
+      guestBtn.removeEventListener("click", onGuest);
+      backdrop.removeEventListener("click", onDismiss);
+      resolve(choice);
+    }
+    const onLine = () => done("line");
+    const onGuest = () => done("guest");
+    const onDismiss = () => done(null);
+
+    lineBtn.addEventListener("click", onLine);
+    guestBtn.addEventListener("click", onGuest);
+    backdrop.addEventListener("click", onDismiss);
+
+    backdrop.hidden = false;
+    dialog.hidden = false;
+  });
 }
 
 async function submitOrder() {
-  const { userId, isTest, profile } = await maybeTesterLogin();
-  if (profile) {
-    // Testers only (profile is only ever set above for a tester) —
-    // awaited so a "did the members row land" check right after
-    // placing a test order is reliable, not a race.
-    await upsertMember(profile);
+  // Ask only for a currently-anonymous visitor who hasn't already
+  // chosen guest checkout this session — everyone else (already
+  // logged in, or already chose guest once) skips straight through,
+  // exactly as checkout worked before this feature existed.
+  if (!currentMember.userId && !guestCheckoutChosen) {
+    const choice = await askCheckoutAuthChoice();
+    if (choice === "guest") {
+      guestCheckoutChosen = true;
+    } else if (choice === "line") {
+      const ok = await loginWithLine();
+      if (!ok) {
+        // Don't silently place a guest order they didn't ask for —
+        // liff.login() either navigated away entirely (nothing left
+        // to do here) or failed outright. They can tap "Send order"
+        // again once they're back/ready.
+        return;
+      }
+      // ok === true: currentMember is now populated (a synchronous,
+      // already-logged-in-in-client case) — fall through and place
+      // the order attributed to them, below.
+    } else {
+      return; // dismissed without choosing — do nothing
+    }
   }
+
+  const { userId, isTest } = currentMember;
 
   const submitBtn = document.getElementById("submit-order");
   submitBtn.disabled = true;
@@ -828,6 +927,14 @@ function wireUpUI() {
     currentOptionsQty += 1;
     updateOptionsSubtotal();
   });
+
+  document.getElementById("member-pill").addEventListener("click", openBenefitsCard);
+  document.getElementById("benefits-close").addEventListener("click", closeBenefitsCard); // X: zero side effects, reopenable via the pill anytime
+  document.getElementById("benefits-backdrop").addEventListener("click", closeBenefitsCard);
+  document.getElementById("benefits-login").addEventListener("click", async () => {
+    await loginWithLine();
+    closeBenefitsCard(); // closes either way — on success the badge already replaced the pill underneath
+  });
 }
 
 async function init() {
@@ -840,6 +947,8 @@ async function init() {
     console.error("LIFF init failed", err);
     // Menu still works for browser testing even if LIFF can't init
   }
+
+  await syncMemberState(); // silent check only — see loginWithLine() for the only place login is actually triggered
 }
 
 init();

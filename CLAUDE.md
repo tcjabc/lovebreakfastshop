@@ -70,36 +70,53 @@ this repo.
 was stale, not current. `liff.isInClient()` still guards
 `liff.sendMessages()`/`liff.closeWindow()` so the app degrades
 gracefully outside LINE.
-* **`liff.getProfile()` now exists, and IS wired into `orders`/
-`members` — but still only behind a tester gate.** `maybeTesterLogin()`
-in `app.js` (called at the top of `submitOrder()`) does
-`liff.isLoggedIn()` → `liff.login()` if needed → `liff.getProfile()`,
-but only for a user `isTesterMode()` (in `supabase-config.js`) says is
-a tester — everyone else's checkout is untouched, no login prompt,
-`orders.user_id` stays null, `orders.is_test` stays false, no
-`members` row is touched. For a tester, `submitOrder()` awaits
-`upsertMember(profile)` (insert-or-refresh `display_name`/
-`picture_url`/`last_seen_at`, never touches `created_at` on an
-existing row) and passes `userId`/`isTest` into `insertOrder()`.
-* **The tester gate — `isTesterMode(userId)` in `supabase-config.js`
-— is the ONLY place in the codebase that should ever decide "is
-this user a tester."** Backed by the `feature_flags` table above.
-Toggling a tester is a Supabase row edit, never a code change. When
-the login flow ships for everyone, delete `isTesterMode()` and its
-one call site in `maybeTesterLogin()` — but keep the `userId`/
-`isTest` plumbing into `insertOrder()`/`upsertMember()`, since that
-part becomes correct-for-everyone once nothing gates it anymore, not
-dead code to remove.
+* **Membership login is opt-in, not forced — a prior design in this
+same file briefly had it forcing everyone into LINE's OAuth page on
+page load; that was reversed, so if you're reading an old summary of
+this section, don't trust it.** `syncMemberState()` in `app.js` runs
+once from `init()` at page load and only ever does a *silent*
+`liff.isLoggedIn()` check — it never calls `liff.login()` itself.
+Already logged in (e.g. a returning visitor, or LIFF's in-client
+silent auto-login already having happened) → `showMemberBadge()`.
+Not logged in → `showMemberPill()` (header pill, "成為會員 Become a
+Member"). Anonymous browsing is fully preserved; nothing about page
+load can trigger LINE's login UI.
+* **`loginWithLine()` in `app.js` is the ONLY place `liff.login()` is
+called, and it only ever runs from an explicit tap** — either the
+"成為會員" pill's benefits card (`#benefits-card`, opened by
+`openBenefitsCard()`, closable via its X or backdrop with zero side
+effects — no flag set, always reopenable) or the checkout dialog (see
+below). `syncLoggedInProfile()` is the shared "what happens once we
+have a real profile" step (`isTesterMode()` → `upsertMember()` →
+`showMemberBadge()`), used by both the silent page-load check and a
+successful explicit login so the two can't drift apart.
+* **Checkout dialog**: `submitOrder()` shows a "使用 LINE 登入" /
+"以訪客身份下單" choice for a currently-anonymous visitor, but only
+once per session — after "guest" is tapped once, `guestCheckoutChosen`
+(module-level, in-memory, not persisted) skips the dialog for every
+later checkout in that session. Dismissing via the backdrop places no
+order at all (same as choosing neither button). Tapping "guest"
+proceeds exactly like checkout always has (`user_id` null). Tapping
+the LINE button calls `loginWithLine()`; outside LINE this is a real
+redirect (page unloads — the order does NOT get placed in that call,
+and the in-memory cart is lost on the way back, same as any full page
+reload today — there's no cart persistence across it), while
+already-logged-in-in-client resolves synchronously and the order
+proceeds attributed to that identity in the same call.
+* **`isTesterMode()` (`supabase-config.js`) is back, but its purpose
+changed — it is NOT a login gate anymore, and hasn't been since this
+redesign.** Login is available to everyone, always, by their own
+choice. `isTesterMode(userId)` now only decides whether a *logged-in*
+user's orders get `is_test = true`, so the shop owner's own testing
+orders land in `staff.html`'s Test Orders section instead of the live
+kitchen queue/auto-print. Called from `syncLoggedInProfile()` on every
+login. `feature_flags` (table, RLS policy, existing seeded row) was
+never dropped through any of this — only what the flag controls
+changed.
 * The LIFF channel's scopes only had `chat_message.write` enabled
 (see README.md Step 3) — `profile` scope was turned on in the LINE
-Developers Console to get this far; if `liff.getProfile()` ever
-starts failing for everyone, tester or not, check that scope first.
-* The first tester was bootstrapped via a temporary `console.log`
-block in `app.js`'s `init()` (added in commit `339c639`, made active
-in `68fc439`, removed in `edac663`) — that block is gone now that
-`feature_flags` has its first real row; don't re-add it as a
-permanent fixture if a second tester needs bootstrapping later,
-re-add-then-remove it the same way instead.
+Developers Console to get this far; if `liff.getProfile()` ever starts
+failing for everyone, check that scope first.
 
 ## Hidden/toggle bug pattern (context for git history)
 
@@ -163,17 +180,18 @@ real hosted URL exists, and swap the real `LIFF\_ID` into `app.js`.
 2. **Tune `AVG\_MINUTES\_PER\_ITEM` / `QUEUE\_BUFFER\_MINUTES`** in
 `supabase-config.js` once there's a week or two of real prep-time
 data — current values are starting guesses.
-3. **(Later) Loyalty system** — more of this exists now, still
-tester-gated (see "LINE integration status" above):
-`liff.login()`/`getProfile()` runs end-to-end at checkout for a
-flagged tester, `orders.user_id`/`is_test` get stamped, and a
-`members` row (`user_id`, `display_name`, `picture_url`,
-`last_seen_at`) is upserted. Still to do: `points`/`total_orders`
-columns on `members` (or a separate table — undecided), an
-auto-increment on order insert, a checkout-time reward-application
-step, and — once the login flow is proven out — removing the tester
-gate so it applies to everyone. Additive to the existing schema, not
-a rebuild.
+3. **(Later) Loyalty system** — more of this exists now, opt-in rather
+than tester-gated or forced (see "LINE integration status" above): a
+visitor can log in anytime via the header pill's benefits card, or at
+checkout; `orders.user_id` gets stamped when they do, and a `members`
+row (`user_id`, `display_name`, `picture_url`, `last_seen_at`) is
+upserted per login. Still to do: `points`/`total_orders` columns on
+`members` (or a separate table — undecided), an auto-increment on
+order insert, and a checkout-time reward-application step. The
+benefits card's three placeholder rows already name what these three
+features are (points, stored value, favourites) — building them is
+filling in that promise, not inventing new scope. Additive to the
+existing schema, not a rebuild.
 
 ## Things NOT to change without discussion
 

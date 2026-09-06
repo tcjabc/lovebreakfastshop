@@ -96,6 +96,34 @@ body {
   white-space: nowrap;
 }
 
+/* "Become a Member" pill — same header slot as .member-badge, same
+   [hidden]-override idiom, never both visible at once (see
+   showMemberBadge()/showMemberPill() in app.js). */
+.member-pill {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
+  background: var(--color-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.member-pill[hidden] {
+  display: none;
+}
+
+.member-pill:active {
+  background: var(--color-primary-hover);
+}
+
 /* Search — sticky, sits directly below the header. */
 .search-bar {
   position: sticky;
@@ -419,6 +447,60 @@ body {
 .checkout-sheet h2 {
   margin: 0 0 12px;
   font-size: 18px;
+  color: var(--color-text);
+}
+
+/* Member benefits card */
+.benefits-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.benefits-header h2 {
+  margin: 0; /* .checkout-sheet h2's own margin is for a lone title; this one sits in a flex row with the close button instead */
+}
+
+.benefits-close-btn {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  color: var(--color-text);
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.benefit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--clay-line);
+}
+
+.benefit-row:last-of-type {
+  border-bottom: none;
+}
+
+/* Same dashed-border/tinted-background treatment as .logo-placeholder
+   above, just square (rounded corners, not a circle) — these are
+   meant to eventually hold a real icon/image per benefit. */
+.benefit-placeholder {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: rgba(43, 33, 28, 0.06);
+  border: 1.6px dashed rgba(43, 33, 28, 0.4);
+}
+
+.benefit-caption {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
   color: var(--color-text);
 }
 

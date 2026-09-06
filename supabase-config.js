@@ -22,9 +22,12 @@ function makeShortId() {
   );
 }
 
-// userId/isTest are only ever non-null/true for a tester (see
-// maybeTesterLogin() in app.js) — for everyone else these are
-// null/false exactly as before this column pair existed.
+// userId comes from the current session's LINE login (see
+// syncMemberState()/loginWithLine() in app.js) — null for an anonymous
+// guest checkout, exactly as every order worked before Membership
+// existed. isTest comes from isTesterMode() below — true only for a
+// logged-in user flagged as a tester, so their orders land in
+// staff.html's Test Orders section instead of the live kitchen queue.
 async function insertOrder({ items, total, note, userId, isTest }) {
   const shortId = makeShortId();
   const { data, error } = await supabaseClient
@@ -49,11 +52,10 @@ async function insertOrder({ items, total, note, userId, isTest }) {
 
 // Upsert-only member record, keyed to the LINE user id — insert on
 // first sight, otherwise refresh the display fields + last_seen_at
-// without touching created_at. Called once per checkout for a logged-
-// in tester (see maybeTesterLogin()/submitOrder() in app.js). Never
-// throws — a members-table hiccup shouldn't be able to block an order
-// from going through, same reasoning as every other LIFF-adjacent call
-// in this app.
+// without touching created_at. Called once per successful login (see
+// syncLoggedInProfile() in app.js), not per order. Never throws — a
+// members-table hiccup shouldn't be able to block anything else in
+// the app, same reasoning as every other LIFF-adjacent call here.
 async function upsertMember(profile) {
   const { error } = await supabaseClient.from("members").upsert(
     {
@@ -90,29 +92,25 @@ function estimateWaitMinutes(itemCount, queueAhead) {
 }
 
 // ============================================================
-// FEATURE FLAGS — tester gating for in-progress features (right now:
-// the LIFF login flow in app.js, ahead of it becoming mandatory for
-// everyone). See README.md → "Set up feature flags" for the table's
-// SQL and RLS policy.
+// FEATURE FLAGS — no longer a login gate. Membership login is
+// available to everyone now, by their own choice (see
+// syncMemberState()/loginWithLine() in app.js) — isTesterMode() has
+// nothing to do with whether someone CAN log in anymore.
 //
-// THE SINGLE GATE CHECK: this is the only place in the codebase that
-// should ever decide "is this user a tester" — every call site should
-// call isTesterMode(), never re-implement or inline this check. That
-// keeps toggling a tester on/off a pure Supabase row update
-// (`update feature_flags set is_tester = true where line_user_id =
-// '...'`), never a code change or redeploy. When the gated feature
-// ships for everyone, delete this function and its call site(s)
-// rather than leaving a second copy of the check behind.
+// Its purpose now: once someone IS logged in, decide whether THEIR
+// orders get flagged is_test = true, so the shop owner's own testing
+// orders land in staff.html's separate Test Orders section instead of
+// the live kitchen queue/auto-print. If you're reading this because
+// you're wondering whether this is dead code left over from the old
+// gate — it isn't; it's called from syncLoggedInProfile() in app.js
+// on every login, and its result flows into insertOrder()'s isTest
+// param exactly like before, just no longer gating login itself.
 //
-// Note this can only recognize a user who already has a LINE user id
-// to check — i.e. someone who has been through liff.getProfile() at
-// least once before (see maybeTesterLogin() in app.js). Seeding the
-// very first tester row therefore needs that id obtained once
-// manually (e.g. a temporary console.log of liff.getProfile() during
-// testing) before it can be inserted into this table.
+// Toggling someone's tester status is still a pure feature_flags row
+// update in Supabase (see README.md), never a code change.
 // ============================================================
 async function isTesterMode(userId) {
-  if (!userId) return false; // no LINE identity yet — never a tester
+  if (!userId) return false; // not logged in — never flagged as a test order
 
   const { data, error } = await supabaseClient
     .from("feature_flags")
@@ -121,8 +119,8 @@ async function isTesterMode(userId) {
     .maybeSingle();
 
   if (error) {
-    console.error("[FeatureFlags] isTesterMode check failed — treating as non-tester", error);
-    return false; // fail closed: never accidentally expose a WIP flow
+    console.error("[FeatureFlags] isTesterMode check failed — treating as a real (non-test) order", error);
+    return false; // fail closed: never accidentally drop a real order out of the live queue
   }
   return Boolean(data && data.is_tester);
 }

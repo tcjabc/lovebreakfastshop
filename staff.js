@@ -249,12 +249,13 @@ function closePreview() {
 async function refresh() {
   const orders = await fetchOrders();
 
-  // Test orders (is_test = true, stamped by the tester-gated LIFF
-  // login flow in app.js — see supabase-config.js's insertOrder())
-  // never mix into the live kitchen queue or its auto-print sweep;
-  // they render in their own section below instead. Split once here
-  // rather than filtering in the DB query so both views come from the
-  // same poll tick and can't drift out of sync with each other.
+  // Test orders (is_test = true — set via isTesterMode() in
+  // supabase-config.js, called on login in app.js; see that file for
+  // its current, non-login-gating purpose) never mix into the live
+  // kitchen queue or its auto-print sweep; they render in their own
+  // section below instead. Split once here rather than filtering in
+  // the DB query so both views come from the same poll tick and can't
+  // drift out of sync with each other.
   const liveOrders = orders.filter((o) => !o.is_test);
   const testOrders = orders.filter((o) => o.is_test);
 
