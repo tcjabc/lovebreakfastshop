@@ -56,6 +56,7 @@
          full sheet. -->
     <div id="member-menu-backdrop" class="member-menu-backdrop" hidden></div>
     <div id="member-menu" class="member-menu" role="menu" aria-label="會員選單" hidden>
+      <button id="member-menu-order-history" class="member-menu-item" role="menuitem" type="button">訂單紀錄</button>
       <button id="member-menu-stamp-card" class="member-menu-item" role="menuitem" type="button">集點進度</button>
       <button id="member-menu-logout" class="member-menu-item" role="menuitem" type="button">登出</button>
     </div>
@@ -202,6 +203,23 @@
       <span class="line-login-divider" aria-hidden="true"></span>
       <span class="line-login-text">與LINE連動</span>
     </button>
+  </section>
+
+  <!-- Order history — opened via #member-menu-order-history (member-menu
+       popover, logged-in only). Reuses the same .sheet-backdrop/
+       .checkout-sheet shell and .benefits-header/.benefits-close-btn
+       header as #benefits-card above, rather than inventing new dialog
+       chrome. Read-only: no reorder/re-add-to-cart action — see
+       renderOrderHistory() in app.js for the fetch (own orders only,
+       is_test excluded, capped at 20, no pagination) and empty state. -->
+  <div id="order-history-backdrop" class="sheet-backdrop" hidden></div>
+  <section id="order-history-sheet" class="checkout-sheet" hidden aria-label="Order history">
+    <div class="sheet-handle"></div>
+    <div class="benefits-header">
+      <h2>訂單紀錄</h2>
+      <button id="order-history-close" class="benefits-close-btn" aria-label="close">✕</button>
+    </div>
+    <div id="order-history-rows"></div>
   </section>
 
   <!-- Checkout sign-in-or-guest choice — shown by submitOrder() (app.js)

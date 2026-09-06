@@ -1168,6 +1168,94 @@ function refreshStampWidgetUI() {
   document.getElementById("benefits-login").hidden = Boolean(currentMember.userId);
 }
 
+// ------------------------------------------------------------
+// Order history — member-only, reached via #member-menu-order-history
+// (member-menu popover). Read-only: no reorder/re-add-to-cart action.
+// Fetched fresh on every open rather than cached like stampProgress/
+// currentFavorites — unlike those, there's no other event in this page
+// session that would need to keep it in sync, so there's nothing
+// gained by holding onto it between opens.
+// ------------------------------------------------------------
+
+// "9月7日 上午1:53" style — Asia/Taipei explicitly, matching the
+// Weekday Stamp Card's own timezone handling, not the visitor's device
+// timezone (see isTaipeiFriday() above for the same reasoning).
+function formatOrderHistoryDateTime(isoString) {
+  return new Date(isoString).toLocaleString("zh-TW", {
+    timeZone: "Asia/Taipei",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+// One order's row — name+qty per line (reusing the exact text shape
+// staff.js's buildCard() already uses for the same order.items data,
+// just without staff.js's own DOM/print concerns), total, the same
+// 集點折抵 wording print.js uses when stamp_discount applied, and the
+// same 現場付款/已用儲值支付 wording the printed receipt uses (this is
+// a record of what happened, so the retrospective receipt wording fits
+// better here than checkout's forward-looking "使用儲值支付").
+function buildOrderHistoryItem(order) {
+  const item = document.createElement("div");
+  item.className = "order-history-item";
+
+  const header = document.createElement("div");
+  header.className = "order-history-item-header";
+  header.innerHTML = `
+    <span class="order-history-date">${formatOrderHistoryDateTime(order.created_at)}</span>
+    <span class="order-history-total">NT$${order.total}</span>
+  `;
+  item.appendChild(header);
+
+  const lines = document.createElement("div");
+  lines.className = "order-history-lines";
+  (order.items || []).forEach((line) => {
+    const div = document.createElement("div");
+    div.textContent = line.modifiers ? `${line.name}（${line.modifiers}）x${line.qty}` : `${line.name} x${line.qty}`;
+    lines.appendChild(div);
+  });
+  item.appendChild(lines);
+
+  if (order.stamp_discount > 0) {
+    const discount = document.createElement("div");
+    discount.className = "order-history-discount";
+    discount.textContent = `集點折抵 -NT$${order.stamp_discount}`;
+    item.appendChild(discount);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "order-history-meta";
+  meta.textContent = order.payment_method === "stored_value" ? "已用儲值支付" : "現場付款";
+  item.appendChild(meta);
+
+  return item;
+}
+
+async function openOrderHistorySheet() {
+  document.getElementById("order-history-backdrop").hidden = false;
+  document.getElementById("order-history-sheet").hidden = false;
+
+  const rows = document.getElementById("order-history-rows");
+  rows.innerHTML = `<p class="order-history-empty">載入中…</p>`;
+
+  const orders = await getMemberOrderHistory(currentMember.userId);
+
+  if (orders.length === 0) {
+    rows.innerHTML = `<p class="order-history-empty">尚無訂單紀錄</p>`;
+    return;
+  }
+
+  rows.innerHTML = "";
+  orders.forEach((order) => rows.appendChild(buildOrderHistoryItem(order)));
+}
+
+function closeOrderHistorySheet() {
+  document.getElementById("order-history-backdrop").hidden = true;
+  document.getElementById("order-history-sheet").hidden = true;
+}
+
 // Silent membership check — called once from init() at page load.
 // liff.isLoggedIn() alone never shows anything (it's a state read, not
 // an action), so this is safe to always run: logged in already (e.g.
@@ -1585,6 +1673,12 @@ function wireUpUI() {
     closeMemberMenu();
     openBenefitsCard(); // already showing real, current stampProgress — see refreshStampWidgetUI()
   });
+  document.getElementById("member-menu-order-history").addEventListener("click", () => {
+    closeMemberMenu();
+    openOrderHistorySheet();
+  });
+  document.getElementById("order-history-close").addEventListener("click", closeOrderHistorySheet);
+  document.getElementById("order-history-backdrop").addEventListener("click", closeOrderHistorySheet);
 }
 
 async function init() {

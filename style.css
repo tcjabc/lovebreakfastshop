@@ -700,6 +700,64 @@ body {
   font-weight: 700;
 }
 
+/* Order history (#order-history-sheet) — read-only list, one
+   .order-history-item per past order. */
+.order-history-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--clay-line);
+}
+
+.order-history-item:last-of-type {
+  border-bottom: none;
+}
+
+.order-history-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.order-history-date {
+  font-size: 13px;
+  color: var(--color-text);
+  opacity: 0.6;
+  font-weight: 500;
+}
+
+.order-history-total {
+  font-size: 15px;
+  color: var(--color-primary);
+}
+
+.order-history-lines {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.order-history-discount {
+  font-size: 13px;
+  color: var(--color-primary);
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.order-history-meta {
+  font-size: 12px;
+  color: var(--color-text);
+  opacity: 0.55;
+  margin-top: 4px;
+}
+
+.order-history-empty {
+  text-align: center;
+  padding: 24px 4px;
+  font-size: 13.5px;
+  color: var(--color-text);
+  opacity: 0.6;
+}
+
 .sheet-total-row {
   display: flex;
   justify-content: space-between;

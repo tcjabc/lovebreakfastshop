@@ -180,6 +180,29 @@ async function getFrequentlyBoughtItemIds(userId, limit = 5) {
     .map(([itemId]) => itemId);
 }
 
+// A member's own past orders, most recent first, for the order-history
+// view in #order-history-sheet (app.js). Excludes is_test orders (those
+// are the shop owner's own checkout testing, not real order history) and
+// caps at `limit` with no pagination — this is a grab-and-go shop, not
+// something anyone needs years of scrollback for, and the cap keeps the
+// query cheap without needing one. [] on failure, same "never block the
+// UI over a fetch hiccup" reasoning as every other read here.
+async function getMemberOrderHistory(userId, limit = 20) {
+  const { data, error } = await supabaseClient
+    .from("orders")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("is_test", false)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[OrderHistory] fetch failed", error);
+    return [];
+  }
+  return data;
+}
+
 // ============================================================
 // FEATURE FLAGS — no longer a login gate. Membership login is
 // available to everyone now, by their own choice (see
