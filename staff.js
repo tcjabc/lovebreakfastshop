@@ -134,6 +134,7 @@ function receiptDataFor(order) {
     total: order.total,
     note: order.note,
     time: formatTime(order.created_at),
+    paymentMethod: order.payment_method,
   };
 }
 

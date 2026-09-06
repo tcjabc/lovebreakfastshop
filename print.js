@@ -210,14 +210,15 @@ function buildCustomerLabelModel(order) {
     size: "normal",
   });
 
-  // Hardcoded until a real payment-status field exists on the order
-  // (see CLAUDE.md's loyalty/next-steps notes) — always printed, never
-  // omitted. Bold + large so it reads as a confirmation, not a detail.
-  // Chinese-only, like every other line on this receipt now — at
-  // "large" size the usable column budget is halved to 24, worth
-  // remembering if this line's text ever needs to grow.
+  // order.paymentMethod comes from orders.payment_method (see
+  // receiptDataFor() in staff.js) — 'cash_on_pickup' or 'stored_value'.
+  // Always printed, never omitted, regardless of which one it is; only
+  // the wording is conditional. Bold + large so it reads as a
+  // confirmation, not a detail. Chinese-only, like every other line on
+  // this receipt — at "large" size the usable column budget is halved
+  // to 24, worth remembering if either wording ever needs to grow.
   lines.push({
-    text: "現場付款",
+    text: order.paymentMethod === "stored_value" ? "已用儲值支付" : "現場付款",
     align: "left",
     bold: true,
     size: "large",

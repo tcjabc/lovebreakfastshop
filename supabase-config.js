@@ -28,21 +28,33 @@ function makeShortId() {
 // existed. isTest comes from isTesterMode() below — true only for a
 // logged-in user flagged as a tester, so their orders land in
 // staff.html's Test Orders section instead of the live kitchen queue.
-async function insertOrder({ items, total, note, userId, isTest }) {
+//
+// id/paymentMethod are optional: paymentMethod defaults to
+// 'cash_on_pickup' (matching orders.payment_method's own DB default)
+// when omitted, so existing callers don't need to change. id is only
+// ever passed for a stored-value order — submitOrder() (app.js)
+// generates it client-side and spends against it via
+// spend-stored-value *before* calling this, so the transaction row and
+// this order row share the same id; left unset (undefined), Postgres
+// generates one via orders.id's own default, exactly as before this
+// feature existed.
+async function insertOrder({ items, total, note, userId, isTest, id, paymentMethod }) {
   const shortId = makeShortId();
+  const row = {
+    short_id: shortId,
+    items,
+    total,
+    note: note || null,
+    status: "pending",
+    user_id: userId || null,
+    is_test: Boolean(isTest),
+    payment_method: paymentMethod || "cash_on_pickup",
+  };
+  if (id) row.id = id;
+
   const { data, error } = await supabaseClient
     .from("orders")
-    .insert([
-      {
-        short_id: shortId,
-        items,
-        total,
-        note: note || null,
-        status: "pending",
-        user_id: userId || null,
-        is_test: Boolean(isTest),
-      },
-    ])
+    .insert([row])
     .select()
     .single();
 

@@ -200,7 +200,14 @@ nothing further to configure. `staff.html`'s dashboard keeps
 auto-print, showing them instead in their own "🧪 Test Orders" section
 so they're still checkable by hand.
 
-### Stored Value (backend only — no staff/checkout UI yet)
+### Stored Value
+
+**Status:** schema/functions, the staff top-up panel (`staff.html`'s
+"會員儲值"), and customer checkout (see below) all exist now — this
+section's own heading used to say "backend only — no staff/checkout UI
+yet," which went stale as soon as the staff panel shipped and is fully
+out of date after checkout wiring; corrected here rather than left
+misleading for the next reader. Refunds still aren't wired up.
 
 Backend for a per-member stored-value balance: a `members.user_id`-keyed
 account with an append-only transaction log, moved only through two
@@ -304,9 +311,37 @@ above) before touching money:
   code (not a generic failure) if the balance doesn't cover it.
 - **`topup-stored-value`** — verifies a staff PIN (`STAFF_PIN` secret,
   same as elsewhere), calls `topup_stored_value()` for a `user_id`
-  passed directly in the request. No staff search UI yet to pick a
-  member from — that, checkout-time spending, and refund wiring are
-  separate, later slices, not part of this backend pass.
+  passed directly in the request. Selecting who to top up happens in
+  `staff.html`'s "會員儲值" panel (member search by name), which also
+  calls `get-stored-value-balance-staff` (same PIN gate) to show a
+  balance before confirming the amount.
+
+#### Checkout payment method
+
+One more column, added after the schema above (same SQL editor):
+
+```sql
+alter table orders add column payment_method text not null
+  default 'cash_on_pickup'
+  check (payment_method in ('cash_on_pickup', 'stored_value'));
+```
+
+At checkout (`app.js`), a logged-in visitor whose balance covers the
+order total is offered a payment choice — 現場付款 stays selected by
+default even then (deliberate: stored value is opt-in, never assumed)
+alongside "使用儲值支付（餘額：NT$X）" showing their real balance. Guests
+and anyone whose balance doesn't cover the total never see the choice
+at all — no partial-spend UI, same no-partial-split decision as
+elsewhere in this app. Submitting with stored value selected generates
+the order's id client-side and calls `spend-stored-value` with it
+*before* the order itself is inserted; the order is only ever saved
+(with that same id, `payment_method = 'stored_value'`) once the spend
+actually succeeds. A spend failure (most likely `insufficient_funds`
+from a race with a concurrent order elsewhere, since the balance was
+already checked once when the sheet opened) shows a clear message and
+lets the visitor retry with cash instead of blocking checkout outright.
+The printed customer label's payment line (see `print.js`) reflects
+whichever method the order actually used.
 
 ## Step 7 — Set up the staff tablet
 

@@ -583,7 +583,73 @@ function confirmAddOptions() {
 // Checkout sheet
 // ------------------------------------------------------------
 
-function openSheet() {
+// Shared caller for every Stored Value Edge Function invoked from this
+// page (balance check on opening the sheet, spend on submit). Mirrors
+// staff.js's identically-named helper — the two files are separate,
+// no-build-step scripts with no shared module to put this in, so it's
+// intentionally duplicated rather than reaching for a build step (see
+// CLAUDE.md's Architecture section). Uniformly returns
+// { ok, code?, error?, ... } whether the function itself responded
+// (any status — its JSON body is always this shape, see
+// supabase/functions/*/index.ts) or the request never completed at
+// all (offline, CORS, malformed body) — callers branch on `.code` the
+// same way regardless of which case it was.
+async function callStoredValueFunction(name, payload) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    try {
+      return await res.json();
+    } catch {
+      return { ok: false, code: "network", error: "伺服器回應格式錯誤" };
+    }
+  } catch (err) {
+    console.error(`[StoredValue] ${name} request failed`, err);
+    return { ok: false, code: "network", error: "網路連線失敗" };
+  }
+}
+
+// Called fresh every time the checkout sheet opens (openSheet(), right
+// below) — cart total can differ between opens (items added/removed),
+// and balance can change between visits, so this never trusts a
+// previous render. Always resets to 現場付款 checked first, so a
+// stored-value choice from a previous open can never silently carry
+// over into a differently-priced cart. Guests skip the network call
+// entirely (currentMember.userId is the fast-path guard) rather than
+// paying the round-trip for a check that can never apply to them.
+async function renderPaymentMethodSection() {
+  const section = document.getElementById("payment-method-section");
+  document.getElementById("payment-method-cash").checked = true;
+  section.hidden = true;
+
+  if (!currentMember.userId) return;
+
+  const total = cartTotal();
+  if (total <= 0) return;
+
+  let idToken;
+  try {
+    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
+  } catch (err) {
+    idToken = null;
+  }
+  if (!idToken) return;
+
+  const result = await callStoredValueFunction("get-stored-value-balance", { id_token: idToken });
+  if (!result.ok || result.balance < total) return; // insufficient or unreachable — no option shown at all, not a disabled one
+
+  document.getElementById("payment-method-stored-value-text").textContent =
+    `使用儲值支付（餘額：NT$${result.balance}）`;
+  section.hidden = false;
+}
+
+async function openSheet() {
   const sheetItems = document.getElementById("sheet-items");
   sheetItems.innerHTML = "";
   Object.entries(cart).forEach(([id, line]) => {
@@ -611,6 +677,7 @@ function openSheet() {
     sheetItems.appendChild(row);
   });
   document.getElementById("sheet-total").textContent = `NT$${cartTotal()}`;
+  await renderPaymentMethodSection();
   document.getElementById("sheet-backdrop").hidden = false;
   document.getElementById("checkout-sheet").hidden = false;
 }
@@ -932,16 +999,85 @@ async function submitOrder() {
   const itemCount = cartCount();
   const note = document.getElementById("order-note").value.trim();
 
+  // Only ever "stored_value" if the section is actually visible — a
+  // guest or insufficient-balance visitor can never end up on it no
+  // matter what a stale radio state might say, since they were never
+  // shown the choice in the first place (see renderPaymentMethodSection()).
+  const paymentSection = document.getElementById("payment-method-section");
+  const paymentMethod =
+    !paymentSection.hidden && document.getElementById("payment-method-stored-value").checked
+      ? "stored_value"
+      : "cash_on_pickup";
+
   try {
+    // Stored-value orders generate their id client-side and spend
+    // against it *before* the order itself exists — spend-stored-value
+    // and this order row end up sharing the same id, so the deduction
+    // and the order it paid for are always linkable. Cash orders keep
+    // letting Postgres generate the id, exactly as before this feature
+    // existed (orderId stays null, insertOrder() below leaves it unset).
+    let orderId = null;
+
+    if (paymentMethod === "stored_value") {
+      orderId = crypto.randomUUID();
+
+      let idToken;
+      try {
+        idToken = liff.getIDToken();
+      } catch (err) {
+        idToken = null;
+      }
+
+      const spendResult = idToken
+        ? await callStoredValueFunction("spend-stored-value", {
+            id_token: idToken,
+            amount: total,
+            order_id: orderId,
+          })
+        : { ok: false, code: "unknown", error: "No ID token available" };
+
+      if (!spendResult.ok) {
+        // Most likely insufficient_funds from a race with another
+        // order placed elsewhere since the balance was already checked
+        // once when the sheet opened — not a hard failure. Let them
+        // retry with cash instead of blocking checkout outright; no
+        // order has been touched yet at this point, so there's nothing
+        // to roll back.
+        console.error("[Checkout] spend-stored-value failed", spendResult);
+        alert("儲值餘額不足，請改用現場付款");
+        document.getElementById("payment-method-cash").checked = true;
+        paymentSection.hidden = true; // don't re-offer a balance we now know doesn't cover it, for the rest of this attempt
+        return;
+      }
+    }
+
     let saved;
     try {
       // Save the order to Supabase — this is the source of truth for
-      // status tracking and printing at the shop. Only a failure here
-      // means nothing was saved and a retry is the right call.
-      saved = await insertOrder({ items: orderItems, total, note, userId, isTest });
+      // status tracking and printing at the shop.
+      saved = await insertOrder({
+        items: orderItems,
+        total,
+        note,
+        userId,
+        isTest,
+        id: orderId,
+        paymentMethod,
+      });
     } catch (err) {
       console.error(err);
-      alert("送出失敗，請重試");
+      if (paymentMethod === "stored_value") {
+        // The spend above already succeeded — this is a genuinely bad
+        // state (money moved, no order recorded), not the ordinary
+        // "nothing happened yet, just retry" case. No automatic
+        // reconciliation exists yet, so this is surfaced distinctly
+        // rather than silently treated like any other retry-safe
+        // failure — a blind "retry" here would place a second, unpaid
+        // order while leaving the first deduction orphaned.
+        alert(`訂單儲存失敗，但儲值已扣款，請聯繫店員處理。訂單編號：${orderId}`);
+      } else {
+        alert("送出失敗，請重試");
+      }
       return;
     }
 

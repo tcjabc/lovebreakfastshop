@@ -80,6 +80,28 @@
       <span>總計</span>
       <span id="sheet-total">NT$0</span>
     </div>
+
+    <!-- Stored Value payment choice — hidden by default; shown only
+         when renderPaymentMethodSection() (app.js, called from
+         openSheet() every time this sheet opens) confirms the visitor
+         is logged in AND their balance covers the current total. A
+         guest, or a member whose balance doesn't cover it, never sees
+         this at all — no partial-spend UI, matching the existing
+         no-partial-split decision elsewhere in this app. 現場付款 stays
+         the checked default even when stored value would cover the
+         order — deliberate, not an oversight. -->
+    <div id="payment-method-section" class="payment-method-section" hidden>
+      <div class="payment-method-title">付款方式</div>
+      <label class="payment-method-row">
+        <input type="radio" id="payment-method-cash" name="payment-method" value="cash_on_pickup" checked />
+        <span>現場付款</span>
+      </label>
+      <label class="payment-method-row">
+        <input type="radio" id="payment-method-stored-value" name="payment-method" value="stored_value" />
+        <span id="payment-method-stored-value-text">使用儲值支付</span>
+      </label>
+    </div>
+
     <label class="note-label" for="order-note">備註</label>
     <input id="order-note" class="note-input" type="text" placeholder="例如：不要香菜" />
     <button id="submit-order" class="submit-btn">送出訂單</button>
