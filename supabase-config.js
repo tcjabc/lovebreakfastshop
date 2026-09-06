@@ -29,16 +29,19 @@ function makeShortId() {
 // logged-in user flagged as a tester, so their orders land in
 // staff.html's Test Orders section instead of the live kitchen queue.
 //
-// id/paymentMethod are optional: paymentMethod defaults to
-// 'cash_on_pickup' (matching orders.payment_method's own DB default)
-// when omitted, so existing callers don't need to change. id is only
-// ever passed for a stored-value order — submitOrder() (app.js)
-// generates it client-side and spends against it via
-// spend-stored-value *before* calling this, so the transaction row and
-// this order row share the same id; left unset (undefined), Postgres
-// generates one via orders.id's own default, exactly as before this
-// feature existed.
-async function insertOrder({ items, total, note, userId, isTest, id, paymentMethod }) {
+// id/paymentMethod/stampDiscount are optional: paymentMethod defaults
+// to 'cash_on_pickup' and stampDiscount to 0 (matching their own DB
+// defaults) when omitted, so existing callers don't need to change. id
+// is only ever passed for a stored-value order and/or a stamp-card
+// redemption — submitOrder() (app.js) generates it client-side and
+// calls spend-stored-value/redeem-stamp-drink against it *before*
+// calling this, so those calls' own records share the same id as this
+// order row; left unset (undefined), Postgres generates one via
+// orders.id's own default, exactly as before either feature existed.
+// stampDiscount is the amount (if any) a Weekday Stamp Card redemption
+// already took off `total` — recorded so the printed receipt (see
+// print.js) can show why the item lines don't sum to the total.
+async function insertOrder({ items, total, note, userId, isTest, id, paymentMethod, stampDiscount }) {
   const shortId = makeShortId();
   const row = {
     short_id: shortId,
@@ -49,6 +52,7 @@ async function insertOrder({ items, total, note, userId, isTest, id, paymentMeth
     user_id: userId || null,
     is_test: Boolean(isTest),
     payment_method: paymentMethod || "cash_on_pickup",
+    stamp_discount: stampDiscount || 0,
   };
   if (id) row.id = id;
 

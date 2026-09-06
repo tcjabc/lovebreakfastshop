@@ -202,6 +202,23 @@ function buildCustomerLabelModel(order) {
     });
   });
 
+  // order.stampDiscount comes from orders.stamp_discount (see
+  // receiptDataFor() in staff.js) — only present/non-zero on a Weekday
+  // Stamp Card redemption, so this line is conditional (unlike the
+  // payment-status line below, which is unconditional but has
+  // conditional wording) — same "built once, only rendered when
+  // relevant" shape either way. Item lines above still show each
+  // item's full, undiscounted price; without this line the printed
+  // total wouldn't visibly reconcile against them.
+  if (order.stampDiscount) {
+    lines.push({
+      text: padColumns("集點折抵", `-NT$${order.stampDiscount}`, CHARS_PER_LINE),
+      align: "left",
+      bold: false,
+      size: "normal",
+    });
+  }
+
   lines.push({ text: divider, align: "left", bold: false, size: "normal" });
   lines.push({
     text: padColumns("總計", `NT$${order.total}`, CHARS_PER_LINE),

@@ -1404,8 +1404,14 @@ async function submitOrder() {
     // redeem-stamp-drink has actually confirmed the redemption — never
     // upfront, since the redemption can still fail (a concurrent
     // redemption on another device, most likely) even though
-    // computeStampDiscount() said it should apply.
+    // computeStampDiscount() said it should apply. stampDiscountApplied
+    // (as opposed to stampDiscount, which just says a discount *would*
+    // apply) is the actually-confirmed amount, recorded on the order
+    // itself (orders.stamp_discount) so the printed receipt can show a
+    // line explaining why the item lines don't sum to the total — see
+    // print.js's buildCustomerLabelModel().
     let total = rawTotal;
+    let stampDiscountApplied = 0;
 
     if (stampDiscount) {
       let stampIdToken;
@@ -1420,12 +1426,14 @@ async function submitOrder() {
         : { ok: false, code: "unknown", error: "No ID token available" };
 
       if (redeemResult.ok) {
-        total = rawTotal - stampDiscount.discount;
+        stampDiscountApplied = stampDiscount.discount;
+        total = rawTotal - stampDiscountApplied;
       } else {
         // The free drink is a bonus, not a payment method — this
         // doesn't block checkout the way a failed stored-value spend
         // does. Fall back to charging full price and let the order
-        // proceed; `total` stays rawTotal above.
+        // proceed; `total`/stampDiscountApplied stay at their
+        // undiscounted defaults above.
         console.error("[Checkout] redeem-stamp-drink failed, charging full price", redeemResult);
         alert("免費飲品兌換失敗，已按原價計算");
       }
@@ -1476,6 +1484,7 @@ async function submitOrder() {
         isTest,
         id: orderId,
         paymentMethod,
+        stampDiscount: stampDiscountApplied,
       });
     } catch (err) {
       console.error(err);
