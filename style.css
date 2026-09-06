@@ -265,6 +265,22 @@ body {
   align-self: flex-end;
 }
 
+/* Wraps item-name + .fav-star in a row at the top of the card, instead
+   of absolutely-positioning the star into the corner — avoids any risk
+   of it overlapping a long/wrapped item name, at the cost of one extra
+   wrapper div. */
+.popular-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.popular-card-header .item-name {
+  flex: 1;
+  min-width: 0;
+}
+
 .menu-list {
   padding: 4px 0 20px;
 }
@@ -370,6 +386,30 @@ body {
   color: var(--color-text);
   opacity: 0.55;
   margin-top: 2px;
+}
+
+/* Favourite toggle — member-only (hidden via the [hidden] attribute
+   set/cleared in app.js, not a CSS `display` rule, so the CLAUDE.md
+   hidden/[display] override bug can't apply here — see its note on
+   this exact pattern). In .menu-item it's a plain flex sibling between
+   .item-info and .stepper (item-info's flex:1 already pushes it and
+   the stepper to the right edge together); in .popular-card it sits in
+   .popular-card-header next to the name instead. No `display` set
+   here on purpose, for the same [hidden] reason. */
+.fav-star {
+  border: none;
+  background: transparent;
+  padding: 4px;
+  margin: -4px; /* keeps a roomy tap target without adding to the layout */
+  font-size: 18px;
+  line-height: 1;
+  color: rgba(43, 33, 28, 0.35);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fav-star.active {
+  color: var(--color-primary);
 }
 
 .stepper {

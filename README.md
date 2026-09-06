@@ -343,6 +343,37 @@ lets the visitor retry with cash instead of blocking checkout outright.
 The printed customer label's payment line (see `print.js`) reflects
 whichever method the order actually used.
 
+### Favourites
+
+```sql
+create table if not exists favorites (
+  user_id text not null,
+  item_id text not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, item_id)
+);
+alter table favorites enable row level security;
+create policy "Allow all" on favorites for all using (true) with check (true);
+```
+
+Deliberately the same permissive "allow all" shape already used for
+`orders`/`members`, not the hardened zero-policy + Edge Function
+pattern used for Stored Value — favouriting isn't money, and a client
+can already write `orders.user_id` for anyone via the anon key today,
+so this doesn't introduce a new weakness. Written to directly from
+`app.js` via the existing Supabase client, no Edge Function.
+
+Member-only: a star toggle (☆/★) appears on every item card (browse
+list, search results, popular row) only while logged in, optimistically
+flipped in the UI on tap and then inserted/deleted in `favorites` to
+match. A "我的最愛" row (same item-card component, positioned next to
+熱門) shows the member's favourited items whenever they have any; with
+zero favourites it shows "常買推薦" instead — the top 3–5 `item_id`s by
+occurrence across that member's own past orders (computed client-side
+from the existing `orders` table, no new table for this) — and if they
+have no past orders either, the row is hidden entirely rather than
+showing empty.
+
 ## Step 7 — Set up the staff tablet
 
 1. On the Android tablet, open **Chrome** and go to your Netlify URL +

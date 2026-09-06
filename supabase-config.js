@@ -104,6 +104,79 @@ function estimateWaitMinutes(itemCount, queueAhead) {
 }
 
 // ============================================================
+// FAVOURITES — same permissive "allow all" RLS shape as orders/members
+// (see README.md's "Favourites" section), written to directly from
+// app.js via this client, no Edge Function — favouriting isn't money.
+// ============================================================
+
+// Returns the set of item ids this member has favourited — [] (not a
+// throw) on failure, since a favourites-fetch hiccup shouldn't be able
+// to block the rest of the menu from rendering.
+async function getFavoriteItemIds(userId) {
+  const { data, error } = await supabaseClient
+    .from("favorites")
+    .select("item_id")
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("[Favorites] fetch failed", error);
+    return [];
+  }
+  return data.map((row) => row.item_id);
+}
+
+// upsert rather than insert — a double-tap racing two inserts for the
+// same (user_id, item_id) would otherwise throw on the primary key
+// conflict and incorrectly revert toggleFavorite()'s optimistic UI
+// flip (app.js) even though the favourite is (still) correctly set.
+async function addFavorite(userId, itemId) {
+  const { error } = await supabaseClient
+    .from("favorites")
+    .upsert({ user_id: userId, item_id: itemId }, { onConflict: "user_id,item_id" });
+  if (error) throw error;
+}
+
+async function removeFavorite(userId, itemId) {
+  const { error } = await supabaseClient
+    .from("favorites")
+    .delete()
+    .eq("user_id", userId)
+    .eq("item_id", itemId);
+  if (error) throw error;
+}
+
+// Top `limit` item ids by total quantity across this member's own past
+// orders (every order, live or test — this reads a member's own
+// history for their own recommendations, not the kitchen queue, so
+// is_test doesn't apply the way it does in staff.html). [] on fetch
+// failure or genuinely no order history — either way the caller (see
+// renderMemberPicksRow() in app.js) treats that as "nothing to
+// suggest" and hides the row, same as a real empty result.
+async function getFrequentlyBoughtItemIds(userId, limit = 5) {
+  const { data, error } = await supabaseClient
+    .from("orders")
+    .select("items")
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("[Favorites] order history fetch failed", error);
+    return [];
+  }
+
+  const counts = {};
+  data.forEach((order) => {
+    (order.items || []).forEach((item) => {
+      counts[item.id] = (counts[item.id] || 0) + item.qty;
+    });
+  });
+
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([itemId]) => itemId);
+}
+
+// ============================================================
 // FEATURE FLAGS — no longer a login gate. Membership login is
 // available to everyone now, by their own choice (see
 // syncMemberState()/loginWithLine() in app.js) — isTesterMode() has

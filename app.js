@@ -217,6 +217,25 @@ function stepperHtml(item, hasOptions) {
   `;
 }
 
+// Favourite-star markup for one item — member-only, [hidden] whenever
+// currentMember.userId is falsy (mirrors how syncMemberState() decides
+// logged-in-or-not elsewhere), filled/outline reflecting currentFavorites
+// at render time. Shared by buildItemRow/buildPopularCard the same way
+// stepperHtml() is, and wired the same way too (wireFavStar() below,
+// called alongside wireStepper()).
+function favStarHtml(item) {
+  const isFav = currentFavorites.has(item.id);
+  return `<button class="fav-star${isFav ? " active" : ""}" data-item-id="${item.id}" aria-label="我的最愛"${currentMember.userId ? "" : " hidden"}>${isFav ? "★" : "☆"}</button>`;
+}
+
+function wireFavStar(container, item) {
+  const star = container.querySelector(".fav-star");
+  star.addEventListener("click", (e) => {
+    e.stopPropagation(); // don't let a tap on the star also trigger whatever the card itself might do
+    toggleFavorite(item.id);
+  });
+}
+
 // Builds one full-width item row — used for both the accordion's
 // category content and the flat search-results list.
 function buildItemRow(item) {
@@ -235,14 +254,18 @@ function buildItemRow(item) {
       <div class="item-price">${priceLabel}</div>
       ${hasOptions ? `<div class="item-customize-hint">可客製化</div>` : ""}
     </div>
+    ${favStarHtml(item)}
     ${stepperHtml(item, hasOptions)}
   `;
   wireStepper(row.querySelector(".stepper"), item, hasOptions);
+  wireFavStar(row, item);
   return row;
 }
 
 // Builds one compact card for the horizontally-scrolling 熱門商品 row —
 // same text/button components as buildItemRow, different container.
+// Also reused as-is for #member-picks-row (我的最愛/常買推薦) — see
+// renderMemberPicksRow() below.
 function buildPopularCard(item) {
   const hasOptions = itemHasOptions(item);
   const priceLabel = item.priceThin != null
@@ -253,11 +276,15 @@ function buildPopularCard(item) {
   const card = document.createElement("div");
   card.className = "popular-card";
   card.innerHTML = `
-    <div class="item-name">${displayName}${isVeg ? `<span class="item-badge veg-badge">蛋奶素</span>` : ""}</div>
+    <div class="popular-card-header">
+      <div class="item-name">${displayName}${isVeg ? `<span class="item-badge veg-badge">蛋奶素</span>` : ""}</div>
+      ${favStarHtml(item)}
+    </div>
     <div class="item-price">${priceLabel}</div>
     ${stepperHtml(item, hasOptions)}
   `;
   wireStepper(card.querySelector(".stepper"), item, hasOptions);
+  wireFavStar(card, item);
   return card;
 }
 
@@ -846,7 +873,11 @@ function handleLogout() {
     console.error("[Login] liff.logout() failed", err);
   }
   currentMember = { userId: null, isTest: false, profile: null };
+  currentFavorites = new Set();
+  frequentlyBoughtItemIds = null;
   showMemberPill();
+  refreshFavoriteUI();
+  renderMemberPicksRow();
 }
 
 // Current session's LINE identity. isTest is decided by isTesterMode()
@@ -856,6 +887,15 @@ function handleLogout() {
 // so they land in staff.html's Test Orders section instead of the
 // live kitchen queue.
 let currentMember = { userId: null, isTest: false, profile: null };
+
+// Favourites/order-history state for the current member — both reset
+// to their logged-out defaults on logout (see handleLogout() below)
+// and populated fresh on login (see loadMemberPicks()). currentFavorites
+// holds item ids; frequentlyBoughtItemIds is null until computed (only
+// happens when currentFavorites is empty — see loadMemberPicks()) so
+// "not computed yet" and "computed, genuinely nothing" stay distinguishable.
+let currentFavorites = new Set();
+let frequentlyBoughtItemIds = null;
 
 // Once true, submitOrder() stops asking an anonymous visitor to choose
 // between LINE login and guest checkout for the rest of this page
@@ -872,6 +912,114 @@ async function syncLoggedInProfile(profile) {
   currentMember = { userId: profile.userId, isTest, profile };
   await upsertMember(profile);
   showMemberBadge(profile);
+  await loadMemberPicks();
+}
+
+// ------------------------------------------------------------
+// Favourites / 常買推薦 — member-only. currentFavorites drives the
+// ☆/★ star on every item card (favStarHtml()/wireFavStar() above);
+// #member-picks-row shows favourited items whenever there are any, or
+// a frequently-bought fallback when there aren't (see
+// renderMemberPicksRow()), same buildPopularCard() component as 熱門.
+// ------------------------------------------------------------
+
+// Called once right after login resolves (syncLoggedInProfile()) — not
+// on every render, since favourites/order history only change via
+// explicit actions (a star tap, placing an order) elsewhere in the
+// same session, not spontaneously. Always resets frequentlyBoughtItemIds
+// to null (re-fetched lazily by renderMemberPicksRow() only if/when it
+// turns out to be needed) rather than deciding here whether it's
+// needed — toggleFavorite() re-renders this same row without going
+// through this function again, so that decision has to live in one
+// place both call sites share, not be duplicated between them.
+async function loadMemberPicks() {
+  currentFavorites = new Set(await getFavoriteItemIds(currentMember.userId));
+  frequentlyBoughtItemIds = null;
+  refreshFavoriteUI();
+  await renderMemberPicksRow();
+}
+
+// Updates every already-rendered ☆/★ star to match currentFavorites/
+// currentMember — needed because renderMenu()/renderPopularRow() may
+// have already built cards (as a guest, or before login resolved)
+// before loadMemberPicks() had anything to show; called again here
+// rather than re-rendering the whole menu, which would blow away
+// search text / open accordion state for no reason.
+function refreshFavoriteUI() {
+  document.querySelectorAll(".fav-star").forEach((star) => {
+    const isFav = currentFavorites.has(star.dataset.itemId);
+    star.hidden = !currentMember.userId;
+    star.classList.toggle("active", isFav);
+    star.textContent = isFav ? "★" : "☆";
+  });
+}
+
+// Optimistic flip first, DB write second — reverted (with a re-render)
+// if the write fails, so the UI never ends up claiming a state that
+// didn't actually save.
+async function toggleFavorite(itemId) {
+  if (!currentMember.userId) return; // defensive — the star is [hidden] for guests in the first place
+  const userId = currentMember.userId;
+  const wasFavorited = currentFavorites.has(itemId);
+
+  if (wasFavorited) currentFavorites.delete(itemId);
+  else currentFavorites.add(itemId);
+  refreshFavoriteUI();
+  await renderMemberPicksRow(); // reflect the change in 我的最愛/常買推薦 immediately too
+
+  try {
+    if (wasFavorited) await removeFavorite(userId, itemId);
+    else await addFavorite(userId, itemId);
+  } catch (err) {
+    console.error("[Favorites] toggle failed, reverting", err);
+    if (wasFavorited) currentFavorites.add(itemId);
+    else currentFavorites.delete(itemId);
+    refreshFavoriteUI();
+    await renderMemberPicksRow();
+  }
+}
+
+// Exactly one of 我的最愛 (any favourites exist) / 常買推薦 (zero
+// favourites, some order history) / hidden (neither) at a time.
+// currentFavorites is always trusted as already current (loadMemberPicks()/
+// toggleFavorite() both keep it so); frequentlyBoughtItemIds is instead
+// fetched lazily right here, the first time it's actually needed —
+// unfavouriting someone's last item re-enters this same "zero
+// favourites" branch without going through loadMemberPicks() again, so
+// the fetch has to live here, not there, or that path would wrongly
+// find frequentlyBoughtItemIds still null and hide the row instead of
+// falling back to it. Once fetched, it's cached until the next login
+// (see loadMemberPicks() resetting it to null) — re-favouriting
+// something and unfavouriting it again this same session reuses the
+// cached value rather than re-fetching.
+async function renderMemberPicksRow() {
+  const wrap = document.getElementById("member-picks-wrap");
+  const titleEl = document.getElementById("member-picks-title");
+  const row = document.getElementById("member-picks-row");
+
+  if (!currentMember.userId) {
+    wrap.hidden = true;
+    row.innerHTML = "";
+    return;
+  }
+
+  if (currentFavorites.size === 0 && frequentlyBoughtItemIds === null) {
+    frequentlyBoughtItemIds = await getFrequentlyBoughtItemIds(currentMember.userId);
+  }
+
+  const itemIds = currentFavorites.size > 0 ? [...currentFavorites] : frequentlyBoughtItemIds;
+  const items = itemIds.map(findItem).filter(Boolean); // filter(Boolean): a favourited/ordered id no longer in MENU shouldn't render a broken card
+
+  if (items.length === 0) {
+    wrap.hidden = true;
+    row.innerHTML = "";
+    return;
+  }
+
+  titleEl.textContent = currentFavorites.size > 0 ? "我的最愛" : "常買推薦";
+  row.innerHTML = "";
+  items.forEach((item) => row.appendChild(buildPopularCard(item)));
+  wrap.hidden = false;
 }
 
 // Silent membership check — called once from init() at page load.

@@ -68,6 +68,20 @@
     </div>
   </div>
 
+  <!-- Member-only — hidden entirely while logged out. Shows 我的最愛
+       (favourited items) whenever the member has any; with zero
+       favourites, shows 常買推薦 (top items from their own order
+       history) instead; with neither, stays hidden. Exactly one of
+       those two states at a time — see renderMemberPicksRow() in
+       app.js, which also owns the title text since it switches between
+       the two. Same .popular-row-wrap/.popular-row-title/.popular-row
+       classes and buildPopularCard() component as 熱門 above —
+       deliberately the same look, not a new visual pattern. -->
+  <div id="member-picks-wrap" class="popular-row-wrap" hidden>
+    <div id="member-picks-title" class="popular-row-title"></div>
+    <div id="member-picks-row" class="popular-row"></div>
+  </div>
+
   <main id="menu-list" class="menu-list">
     <!-- accordion categories (browse mode) or flat matches (search mode), injected by app.js -->
   </main>
