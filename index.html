@@ -130,7 +130,11 @@
       <div class="benefit-placeholder" aria-hidden="true"></div>
       <p class="benefit-caption">優先顯示最愛餐點，下次點餐更省時！</p>
     </div>
-    <button id="benefits-login" class="submit-btn">使用 LINE 登入</button>
+    <button id="benefits-login" class="line-login-btn">
+      <img class="line-login-icon" src="assets/line-icon.png" alt="" />
+      <span class="line-login-divider" aria-hidden="true"></span>
+      <span class="line-login-text">與LINE連動</span>
+    </button>
   </section>
 
   <!-- Checkout sign-in-or-guest choice — shown by submitOrder() (app.js)
@@ -142,7 +146,11 @@
   <section id="checkout-auth-dialog" class="checkout-sheet" hidden aria-label="Sign in or continue as guest">
     <div class="sheet-handle"></div>
     <h2>登入或以訪客結帳 Sign in or check out as a guest</h2>
-    <button id="checkout-auth-line" class="submit-btn">使用 LINE 登入 Sign in with LINE</button>
+    <button id="checkout-auth-line" class="line-login-btn">
+      <img class="line-login-icon" src="assets/line-icon.png" alt="" />
+      <span class="line-login-divider" aria-hidden="true"></span>
+      <span class="line-login-text">與LINE連動</span>
+    </button>
     <button id="checkout-auth-guest" class="close-sheet-btn">以訪客身份下單 Place order as guest</button>
   </section>
 

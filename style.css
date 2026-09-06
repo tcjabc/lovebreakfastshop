@@ -612,6 +612,76 @@ body {
 
 .submit-btn:active { background: var(--color-primary-hover); }
 
+/* Official LINE Login button — one shared component used identically
+   everywhere a "Sign in with LINE" action appears (benefits card,
+   checkout auth dialog); never restyle it per call site.
+   Colors/text/layout follow LINE's published button guidelines.
+   Every spacing value below derives from --line-icon-w (the icon's
+   own rendered width) per that spec: the icon's left inset, the
+   text's left/right padding, and the button's own outer margin
+   (isolation zone) all equal that one value; the text's top/bottom
+   padding is half of it. The one value the guideline doesn't name
+   directly — the small gap between the icon and the divider — is set
+   to that same half-value so the icon reads as grouped with the
+   divider rather than centered in empty space; adjust here if LINE's
+   spec is ever checked against a more exact reference. */
+.line-login-btn {
+  --line-icon-w: 20px;
+
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin: var(--line-icon-w) 0; /* isolation zone: >= the icon's own left padding, on every side */
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: #06c755;
+  cursor: pointer;
+  overflow: hidden; /* clips the hover/press overlay to the button's own rounded corners */
+  position: relative;
+}
+
+/* Hover/press darken the whole button (icon + divider + text
+   included, per the real button's look) via one overlay on top of
+   everything, rather than only recoloring the background. */
+.line-login-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.line-login-btn:hover::after {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.line-login-btn:active::after {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.line-login-icon {
+  width: var(--line-icon-w);
+  height: var(--line-icon-w); /* native aspect ratio: the source PNG is a 64x64 square, scaled down uniformly, never stretched */
+  margin: 0 calc(var(--line-icon-w) / 2) 0 var(--line-icon-w);
+  flex-shrink: 0;
+}
+
+.line-login-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 8px 0;
+  background: rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
+}
+
+.line-login-text {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 500;
+  padding: calc(var(--line-icon-w) / 2) var(--line-icon-w);
+  white-space: nowrap;
+}
+
 .close-sheet-btn {
   width: 100%;
   margin-top: 10px;
