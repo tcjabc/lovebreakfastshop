@@ -216,10 +216,17 @@ body {
   transform: translate(-50%, -50%);
   background: white;
   border-radius: 14px;
-  padding: 16px;
+  padding: 20px;
   z-index: 21;
-  max-height: 80vh;
-  max-width: calc(100vw - 32px);
+  /* Sized to fit its content (two full documents' worth of preview
+     lines) rather than an arbitrary box — 80vh was clipping a normal
+     two-document preview into a cramped scrolling window on real
+     viewport heights. 96vh/96vw leave just enough margin that the
+     backdrop is still visible at the edges; overflow:auto stays on as
+     a safety net for pathologically long orders (many items), not as
+     the normal way this dialog is viewed. */
+  max-height: 96vh;
+  max-width: calc(100vw - 16px);
   overflow: auto;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
 }
@@ -229,7 +236,7 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
   font-weight: 700;
   color: var(--color-text);
 }
@@ -266,6 +273,38 @@ body {
 
 .receipt-preview-line.bold {
   font-weight: 700;
+}
+
+/* 2x, not an arbitrary "looks big enough" multiplier: the XP-Q800
+   prints Font A at a 12x24 dot cell (confirmed hardware — 576 dots/
+   line at 80mm / 203 DPI ÷ 48 columns = 12 dots/column), and GS ! n's
+   "large" mode (0x11) sets both the double-width and double-height
+   bits, doubling that cell to 24x48 dots — exactly 2x in each
+   dimension, not 1.5x. Since .receipt-preview-body is a monospace
+   font with its width set inline to `${CHARS_PER_LINE}ch` (staff.js),
+   scaling a large line's font-size by exactly 2x makes 24 large
+   characters span precisely the same pixel width as 48 normal ones —
+   so overflow shown here means the real printer would wrap/overflow
+   too, not just this CSS box.  */
+.receipt-preview-line.large {
+  font-size: 2em;
+}
+
+/* Separates the two printed documents (kitchen ticket, customer
+   label) within one preview panel — sans-serif/uppercase so it reads
+   as a UI label, not part of either receipt's own monospace content. */
+.receipt-preview-doc-title {
+  font-family: 'Noto Sans TC', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  margin: 14px 0 4px;
+}
+
+.receipt-preview-doc-title:first-child {
+  margin-top: 0;
 }
 
 @media (max-width: 720px) {

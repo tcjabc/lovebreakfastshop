@@ -155,6 +155,11 @@ async function markPrinted(order) {
 // icon is the right amount of visible instead). Returns whether the
 // print actually succeeded, so callers can react (mark printed, flag
 // the warning icon) without duplicating the try/catch.
+//
+// ThermalPrinter.printOrder() sends both the kitchen ticket and the
+// customer label (in that order) before resolving, and throws if
+// either transferOut fails — so markPrinted() below only ever fires
+// once both documents have gone out successfully, not after just one.
 async function handlePrint(order, { silent = false } = {}) {
   try {
     await ThermalPrinter.printOrder(receiptDataFor(order));
@@ -200,23 +205,37 @@ function autoPrintPendingOrders(orders) {
     });
 }
 
-// Renders the exact same {text, align, bold} lines print.js would
-// send to the printer, as plain HTML — lets spacing/alignment changes
-// in print.js be checked on screen without a physical test print.
-function handlePreview(order) {
-  const lines = ThermalPrinter.buildReceiptPreview(receiptDataFor(order));
+// Renders the exact same {text, align, bold, size} lines print.js
+// would send to the printer, as plain HTML — lets spacing/alignment
+// changes in print.js be checked on screen without a physical test
+// print. Two documents now print per order (kitchen ticket, customer
+// label); the preview shows both, in the same order they'll print, so
+// it can't drift from what printOrder() actually sends.
+function renderPreviewDoc(container, title, lines) {
+  const heading = document.createElement("div");
+  heading.className = "receipt-preview-doc-title";
+  heading.textContent = title;
+  container.appendChild(heading);
 
-  const body = document.getElementById("receipt-preview-body");
-  body.style.width = `${ThermalPrinter.CHARS_PER_LINE}ch`;
-  body.innerHTML = "";
   lines.forEach((line) => {
     const div = document.createElement("div");
     div.className = "receipt-preview-line";
     if (line.align === "center") div.classList.add("center");
     if (line.bold) div.classList.add("bold");
+    if (line.size === "large") div.classList.add("large");
     div.textContent = line.text;
-    body.appendChild(div);
+    container.appendChild(div);
   });
+}
+
+function handlePreview(order) {
+  const data = receiptDataFor(order);
+
+  const body = document.getElementById("receipt-preview-body");
+  body.style.width = `${ThermalPrinter.CHARS_PER_LINE}ch`;
+  body.innerHTML = "";
+  renderPreviewDoc(body, "🍳 Kitchen ticket", ThermalPrinter.buildKitchenTicketPreview(data));
+  renderPreviewDoc(body, "🧾 Customer label", ThermalPrinter.buildCustomerLabelPreview(data));
 
   document.getElementById("receipt-preview-backdrop").hidden = false;
   document.getElementById("receipt-preview").hidden = false;

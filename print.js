@@ -86,54 +86,29 @@ function padColumns(left, right, width) {
   return label + " ".repeat(gap) + right;
 }
 
-// Builds the receipt as a flat list of {text, align, bold} lines —
-// the single source of truth for both the real ESC/POS print
-// (buildReceipt, below) and the on-screen preview in staff.html
-// (ThermalPrinter.buildReceiptPreview), so the two can't drift apart.
-function buildReceiptModel(order) {
-  const divider = "-".repeat(CHARS_PER_LINE);
-  const lines = [];
-
-  lines.push({ text: order.shopName, align: "center", bold: true });
-  lines.push({ text: divider, align: "left", bold: false });
-
-  order.items.forEach((item) => {
-    const label = item.modifiers ? `${item.name}(${item.modifiers})` : item.name;
-    lines.push({
-      text: padColumns(`${label} x${item.qty}`, `$${item.subtotal}`, CHARS_PER_LINE),
-      align: "left",
-      bold: false,
-    });
-  });
-
-  lines.push({ text: divider, align: "left", bold: false });
-  lines.push({ text: padColumns("Total", `NT$${order.total}`, CHARS_PER_LINE), align: "left", bold: true });
-
-  if (order.note) {
-    lines.push({ text: `Note: ${order.note}`, align: "left", bold: false });
-  }
-
-  lines.push({ text: `Order #${order.shortId}   ${order.time}`, align: "left", bold: false });
-
-  return lines;
-}
-
-function buildReceipt(order) {
+// Shared low-level renderer: turns a flat list of {text, align, bold,
+// size} lines into one ESC/POS byte stream (init → styled lines →
+// reset → feed → cut). Both documents below (kitchen ticket, customer
+// label) build their own line list but go through this exact same
+// loop, so their align/bold/size state-tracking and init/cut framing
+// can't drift apart from each other even though their *content* does.
+function renderLinesToBytes(lines) {
   const bytes = [];
   const push = (...arr) => bytes.push(...arr);
   const pushText = (str) => push(...textToBytes(str));
 
-  push(ESC, 0x40); // initialize printer — also resets align/bold to defaults
+  push(ESC, 0x40); // initialize printer — also resets align/bold/size to defaults
 
-  // Track current align/bold state and only emit a command when a
-  // line's style actually differs from it — e.g. the header's
-  // center+bold can't bleed into the item list, because the first
-  // item line's {align:"left", bold:false} always emits an explicit
-  // reset rather than assuming a prior reset already happened.
+  // Track current align/bold/size state and only emit a command when a
+  // line's style actually differs from it — e.g. a centered/bold
+  // header can't bleed into the body, because the first body line's
+  // {align:"left", bold:false, size:"normal"} always emits an
+  // explicit reset rather than assuming a prior reset already happened.
   let currentAlign = "left";
   let currentBold = false;
+  let currentSize = "normal";
 
-  buildReceiptModel(order).forEach((line) => {
+  lines.forEach((line) => {
     if (line.align !== currentAlign) {
       push(ESC, 0x61, line.align === "center" ? 0x01 : 0x00);
       currentAlign = line.align;
@@ -142,19 +117,123 @@ function buildReceipt(order) {
       push(ESC, 0x45, line.bold ? 0x01 : 0x00);
       currentBold = line.bold;
     }
+    if (line.size !== currentSize) {
+      // GS ! n — character size select. n=0x00 is normal; 0x11 is
+      // double width + double height, the standard ESC/POS combo for
+      // an emphasized/"large" line.
+      push(GS, 0x21, line.size === "large" ? 0x11 : 0x00);
+      currentSize = line.size;
+    }
     pushText(line.text + "\n");
   });
 
   // Explicit reset before the trailing feed/cut too, so whatever
-  // prints next (this printer or another job) starts from defaults
-  // rather than inheriting the last line's style.
+  // prints next (the next document, or another job) starts from
+  // defaults rather than inheriting the last line's style.
   push(ESC, 0x61, 0x00);
   push(ESC, 0x45, 0x00);
+  push(GS, 0x21, 0x00);
 
   push(ESC, 0x64, FEED_LINES_BEFORE_CUT); // feed blank lines to clear the cutter before cutting
   push(GS, 0x56, 0x00); // full cut
 
   return new Uint8Array(bytes);
+}
+
+// ============================================================
+// KITCHEN TICKET — printed for whoever is making the food. Just the
+// order number (large, so it's readable from across the counter) and
+// what to make: no prices, no total, no footer. Deliberately terse.
+// ============================================================
+function buildKitchenTicketModel(order) {
+  const divider = "-".repeat(CHARS_PER_LINE);
+  const lines = [];
+
+  lines.push({ text: `訂單編號 Order #: ${order.shortId}`, align: "center", bold: true, size: "large" });
+  lines.push({ text: divider, align: "left", bold: false, size: "normal" });
+
+  order.items.forEach((item) => {
+    // Qty kept (it's prep-relevant, not price info) — just no $ amount.
+    // Split into two lines instead of one "name(modifiers) xN" line —
+    // at "large" size the column budget is halved to 24, and packing
+    // name+modifiers+qty onto one line overflowed that for most real
+    // menu items (see the audit in the buildKitchenTicketModel commit
+    // history). Splitting shrinks each line's own text, which fixes
+    // the common case; it doesn't guarantee either line individually
+    // fits 24 columns — see displayWidth()/CHARS_PER_LINE.
+    lines.push({ text: `${item.name} x${item.qty}`, align: "left", bold: true, size: "large" });
+    if (item.modifiers) {
+      // Indented one level in (2 spaces, not a tab — ESC/POS tab stops
+      // aren't guaranteed configured on this printer) so it visually
+      // groups under its parent item line rather than reading as a
+      // separate entry. Same bold+large as the item line above it.
+      lines.push({ text: `  ${item.modifiers}`, align: "left", bold: true, size: "large" });
+    }
+  });
+
+  return lines;
+}
+
+function buildKitchenTicket(order) {
+  return renderLinesToBytes(buildKitchenTicketModel(order));
+}
+
+// ============================================================
+// CUSTOMER LABEL — the itemized receipt for the customer: full price
+// breakdown, total, payment status, and the original order#/time
+// footer. Bilingual headers; item names/modifiers stay Chinese-only,
+// same as the menu data itself.
+// ============================================================
+function buildCustomerLabelModel(order) {
+  const divider = "-".repeat(CHARS_PER_LINE);
+  const lines = [];
+
+  lines.push({ text: order.shopName, align: "center", bold: true, size: "normal" });
+  lines.push({ text: `訂單編號 Order #: ${order.shortId}`, align: "left", bold: false, size: "normal" });
+  lines.push({ text: divider, align: "left", bold: false, size: "normal" });
+
+  order.items.forEach((item) => {
+    const label = item.modifiers ? `${item.name}(${item.modifiers})` : item.name;
+    lines.push({
+      text: padColumns(`${label} x${item.qty}`, `$${item.subtotal}`, CHARS_PER_LINE),
+      align: "left",
+      bold: false,
+      size: "normal",
+    });
+  });
+
+  lines.push({ text: divider, align: "left", bold: false, size: "normal" });
+  lines.push({
+    text: padColumns("總計 Total", `NT$${order.total}`, CHARS_PER_LINE),
+    align: "left",
+    bold: true,
+    size: "normal",
+  });
+
+  // Hardcoded until a real payment-status field exists on the order
+  // (see CLAUDE.md's loyalty/next-steps notes) — always printed, never
+  // omitted. Bold + large so it reads as a confirmation, not a detail.
+  // Chinese-only (not bilingual like the order#/total lines above) —
+  // at "large" size the usable column budget is halved to 24, and the
+  // bilingual version of this line didn't fit.
+  lines.push({
+    text: "現場付款",
+    align: "left",
+    bold: true,
+    size: "large",
+  });
+
+  if (order.note) {
+    lines.push({ text: `Note: ${order.note}`, align: "left", bold: false, size: "normal" });
+  }
+
+  lines.push({ text: `Order #${order.shortId}   ${order.time}`, align: "left", bold: false, size: "normal" });
+
+  return lines;
+}
+
+function buildCustomerLabel(order) {
+  return renderLinesToBytes(buildCustomerLabelModel(order));
 }
 
 let printerDevice = null;
@@ -244,8 +323,6 @@ async function printOrder(order) {
     }
   }
 
-  const data = buildReceipt(order);
-
   // Re-derive the OUT endpoint rather than caching it from
   // connectPrinter() — cheap, and avoids relying on state surviving
   // between the two calls. See connectPrinter()'s console.log for
@@ -253,16 +330,26 @@ async function printOrder(order) {
   const iface = printerDevice.configuration.interfaces[0];
   const endpoint = iface.alternate.endpoints.find((e) => e.direction === "out");
 
-  await printerDevice.transferOut(endpoint.endpointNumber, data);
+  // Two separate documents, same short_id, sent as two sequential
+  // jobs (each ends in its own cut) over the one connected printer.
+  // Kitchen ticket first so food prep can start before the customer
+  // label finishes printing. If either transferOut throws, the other
+  // has already run or never runs — the caller (staff.js's
+  // handlePrint) treats that as one failed print() call and won't
+  // mark the order printed, same as today.
+  await printerDevice.transferOut(endpoint.endpointNumber, buildKitchenTicket(order));
+  await printerDevice.transferOut(endpoint.endpointNumber, buildCustomerLabel(order));
 }
 
-// Exposed globally for staff.js to call. CHARS_PER_LINE and
-// buildReceiptPreview let staff.html render an on-screen preview from
-// the exact same layout logic as the real print, without needing a
-// physical printer to check spacing/alignment changes.
+// Exposed globally for staff.js to call. CHARS_PER_LINE and the two
+// buildXPreview functions let staff.html render an on-screen preview
+// of both documents from the exact same layout logic as the real
+// print, without needing a physical printer to check spacing/
+// alignment changes.
 window.ThermalPrinter = {
   connectPrinter,
   printOrder,
-  buildReceiptPreview: buildReceiptModel,
+  buildKitchenTicketPreview: buildKitchenTicketModel,
+  buildCustomerLabelPreview: buildCustomerLabelModel,
   CHARS_PER_LINE,
 };
