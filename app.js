@@ -810,6 +810,21 @@ async function init() {
     console.error("LIFF init failed", err);
     // Menu still works for browser testing even if LIFF can't init
   }
+
+  // TEMP: remove after bootstrapping first tester — one-off capture of
+  // a real LINE user ID to seed the first feature_flags row (see
+  // README.md → "Feature flags (tester gating)"). Own try/catch so a
+  // getProfile() failure (e.g. profile scope not actually enabled yet,
+  // or LIFF init above having failed) never gets mislabeled as a LIFF
+  // init failure, and never blocks the rest of init().
+  try {
+    if (liff.isLoggedIn()) {
+      const profile = await liff.getProfile();
+      console.log("LIFF userId:", profile.userId);
+    }
+  } catch (err) {
+    console.error("[TEMP bootstrap] getProfile failed", err);
+  }
 }
 
 init();
