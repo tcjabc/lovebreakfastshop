@@ -812,10 +812,20 @@ async function callEdgeFunction(name, payload) {
 // not necessarily the raw cart total — see openSheet()) so the balance
 // check and displayed option both reflect what would really be
 // charged, not the pre-discount cart total.
+// The balance renderPaymentMethodSection() last fetched — kept around
+// so submitOrder() can record it on the order (orders.balance_snapshot,
+// see print.js's receipt) for a cash-paying member without a second
+// get-stored-value-balance call. null for a guest, before the first
+// fetch, or if the fetch failed — reset at the top of every
+// renderPaymentMethodSection() call so a stale balance from a
+// previous member/session can never leak into a later order.
+let currentStoredValueBalance = null;
+
 async function renderPaymentMethodSection(amountDue) {
   const section = document.getElementById("payment-method-section");
   document.getElementById("payment-method-cash").checked = true;
   section.hidden = true;
+  currentStoredValueBalance = null;
 
   if (!currentMember.userId) return;
   if (amountDue <= 0) return;
@@ -829,7 +839,10 @@ async function renderPaymentMethodSection(amountDue) {
   if (!idToken) return;
 
   const result = await callEdgeFunction("get-stored-value-balance", { id_token: idToken });
-  if (!result.ok || result.balance < amountDue) return; // insufficient or unreachable — no option shown at all, not a disabled one
+  if (!result.ok) return; // unreachable — no option shown, no balance to record either
+
+  currentStoredValueBalance = result.balance;
+  if (result.balance < amountDue) return; // insufficient — no option shown at all, not a disabled one
 
   document.getElementById("payment-method-stored-value-text").textContent =
     `使用儲值支付（餘額：NT$${result.balance}）`;
@@ -1695,6 +1708,14 @@ async function submitOrder() {
       }
     }
 
+    // Post-order-payment stored-value balance, for the receipt's
+    // balance_snapshot (see print.js) — the real post-deduction balance
+    // if stored value paid for this order, otherwise whatever
+    // renderPaymentMethodSection() already fetched when the sheet
+    // opened (currentStoredValueBalance). Either way, no extra
+    // get-stored-value-balance call here.
+    let balanceSnapshot = currentStoredValueBalance;
+
     if (paymentMethod === "stored_value") {
       let idToken;
       try {
@@ -1710,6 +1731,8 @@ async function submitOrder() {
             order_id: orderId,
           })
         : { ok: false, code: "unknown", error: "No ID token available" };
+
+      if (spendResult.ok) balanceSnapshot = spendResult.balance;
 
       if (!spendResult.ok) {
         // Most likely insufficient_funds from a race with another
@@ -1742,6 +1765,9 @@ async function submitOrder() {
         paymentMethod,
         stampDiscount: stampDiscountApplied,
         pickupSlot: selectedSlotIso,
+        memberName: currentMember.profile ? currentMember.profile.displayName : null,
+        stampSnapshot: stampProgress ? { days: stampProgress.days, unlocked: stampProgress.unlocked } : null,
+        balanceSnapshot,
       });
     } catch (err) {
       console.error(err);

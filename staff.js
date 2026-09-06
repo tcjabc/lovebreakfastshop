@@ -136,6 +136,10 @@ function receiptDataFor(order) {
     time: formatTime(order.created_at),
     paymentMethod: order.payment_method,
     stampDiscount: order.stamp_discount,
+    pickupSlot: order.pickup_slot,
+    memberName: order.member_name,
+    stampSnapshot: order.stamp_snapshot,
+    balanceSnapshot: order.balance_snapshot,
   };
 }
 

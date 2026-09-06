@@ -45,7 +45,28 @@ function makeShortId() {
 // reserve_pickup_slot() RPC (see submitOrder() in app.js) *before*
 // this is ever called — insertOrder() itself never reserves anything,
 // just records which slot the caller already secured.
-async function insertOrder({ items, total, note, userId, isTest, id, paymentMethod, stampDiscount, pickupSlot }) {
+// memberName/stampSnapshot/balanceSnapshot are a point-in-time capture
+// for the printed receipt (see print.js) — a member's display name,
+// their days/unlocked stamp progress, and their stored-value balance
+// as of this order (post-deduction if stored value paid for it,
+// otherwise whatever was already known at checkout) — never re-derived
+// later, so the receipt always reflects what was true at order time
+// even if the member's real progress/balance has since moved on.
+// All three stay null for a guest order.
+async function insertOrder({
+  items,
+  total,
+  note,
+  userId,
+  isTest,
+  id,
+  paymentMethod,
+  stampDiscount,
+  pickupSlot,
+  memberName,
+  stampSnapshot,
+  balanceSnapshot,
+}) {
   const shortId = makeShortId();
   const row = {
     short_id: shortId,
@@ -58,6 +79,9 @@ async function insertOrder({ items, total, note, userId, isTest, id, paymentMeth
     payment_method: paymentMethod || "cash_on_pickup",
     stamp_discount: stampDiscount || 0,
     pickup_slot: pickupSlot || null,
+    member_name: memberName || null,
+    stamp_snapshot: stampSnapshot || null,
+    balance_snapshot: balanceSnapshot == null ? null : balanceSnapshot,
   };
   if (id) row.id = id;
 

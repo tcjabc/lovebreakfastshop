@@ -140,6 +140,24 @@ function renderLinesToBytes(lines) {
   return new Uint8Array(bytes);
 }
 
+// "9/8 (二) 06:00" — same "shift by the fixed +8h offset, read UTC
+// fields as Taipei-local fields" trick as app.js's own
+// formatPickupSlotLabel() (duplicated here — print.js has no shared
+// module with that page's script), and the same output format the
+// checkout confirmation screen already shows, so a customer sees one
+// consistent time everywhere it's printed/displayed.
+function formatPickupTime(isoString) {
+  const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000;
+  const weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"];
+  const shifted = new Date(new Date(isoString).getTime() + TAIPEI_OFFSET_MS);
+  const month = shifted.getUTCMonth() + 1;
+  const day = shifted.getUTCDate();
+  const weekday = weekdayLabels[shifted.getUTCDay()];
+  const hour = String(shifted.getUTCHours()).padStart(2, "0");
+  const minute = String(shifted.getUTCMinutes()).padStart(2, "0");
+  return `${month}/${day} (${weekday}) ${hour}:${minute}`;
+}
+
 // ============================================================
 // KITCHEN TICKET — printed for whoever is making the food. Just the
 // order number (large, so it's readable from across the counter) and
@@ -150,6 +168,15 @@ function buildKitchenTicketModel(order) {
   const lines = [];
 
   lines.push({ text: `訂單編號：${order.shortId}`, align: "center", bold: true, size: "large" });
+  // order.pickupSlot comes from orders.pickup_slot (see receiptDataFor()
+  // in staff.js) — orders aren't strictly first-come-first-served
+  // anymore now that pickup times are reserved, so staff need the
+  // committed time here too, not just on the customer's own copy.
+  // Always present on any order placed after pickup slots shipped;
+  // guarded anyway in case of an older/malformed row.
+  if (order.pickupSlot) {
+    lines.push({ text: `取餐時間：${formatPickupTime(order.pickupSlot)}`, align: "center", bold: true, size: "large" });
+  }
   lines.push({ text: divider, align: "left", bold: false, size: "normal" });
 
   order.items.forEach((item) => {
@@ -190,6 +217,36 @@ function buildCustomerLabelModel(order) {
 
   lines.push({ text: order.shopName, align: "center", bold: true, size: "normal" });
   lines.push({ text: `訂單編號：${order.shortId}`, align: "left", bold: false, size: "normal" });
+
+  if (order.pickupSlot) {
+    lines.push({ text: `取餐時間：${formatPickupTime(order.pickupSlot)}`, align: "left", bold: false, size: "normal" });
+  }
+
+  // order.memberName comes from orders.member_name (see receiptDataFor()
+  // in staff.js) — set only for a logged-in member's order (see
+  // submitOrder() in app.js), so this whole block is omitted entirely
+  // for a guest order rather than printing empty/placeholder lines.
+  // stampSnapshot/balanceSnapshot are this member's progress/balance as
+  // of THIS order, not re-derived from their current real state, so an
+  // old receipt stays an accurate record even after later orders change
+  // both. ●/○ rather than an emoji/cup glyph for the Fri slot — not
+  // every printer codepage has one, and the bracket around it is enough
+  // to set it apart from the plain Mon-Thu run without needing a
+  // different glyph at all.
+  if (order.memberName) {
+    lines.push({ text: order.memberName, align: "left", bold: true, size: "normal" });
+
+    const days = (order.stampSnapshot && order.stampSnapshot.days) || [false, false, false, false];
+    const unlocked = Boolean(order.stampSnapshot && order.stampSnapshot.unlocked);
+    const dayCircles = days.map((filled) => (filled ? "●" : "○")).join("");
+    const friCircle = unlocked ? "●" : "○";
+    lines.push({ text: `${dayCircles} (${friCircle})`, align: "left", bold: false, size: "normal" });
+
+    if (order.balanceSnapshot != null) {
+      lines.push({ text: `儲值餘額 NT$${order.balanceSnapshot}`, align: "left", bold: false, size: "normal" });
+    }
+  }
+
   lines.push({ text: divider, align: "left", bold: false, size: "normal" });
 
   order.items.forEach((item) => {
