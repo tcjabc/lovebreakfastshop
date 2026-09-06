@@ -342,14 +342,14 @@ const MENU = [
   {
     category: "飲品",
     items: [
-      { id: "dr-01", name: "美式咖啡", nameEn: "", price: 45, modifierGroups: ["hotCold"] },
-      { id: "dr-02", name: "拿鐵", nameEn: "", price: 60, modifierGroups: ["hotCold"] },
-      { id: "dr-03", name: "可可牛奶", nameEn: "", price: 40, modifierGroups: ["hotCold"] },
-      { id: "dr-04", name: "Tree Top 蘋果汁", nameEn: "", price: 30, modifierGroups: ["hotCold"] },
-      { id: "dr-05", name: "鮮奶茶", nameEn: "", price: 35, modifierGroups: ["hotCold"] },
-      { id: "dr-06", name: "非基改豆漿", nameEn: "", price: 25, modifierGroups: ["hotCold"] },
-      { id: "dr-07", name: "紅茶", nameEn: "", price: 20, modifierGroups: ["hotCold"] },
-      { id: "dr-08", name: "豆漿紅茶", nameEn: "", price: 25, modifierGroups: ["hotCold"] },
+      { id: "dr-01", name: "美式咖啡（120oz）", nameEn: "", price: 45, modifierGroups: ["hotCold"] },
+      { id: "dr-02", name: "拿鐵（120oz）", nameEn: "", price: 60, modifierGroups: ["hotCold"] },
+      { id: "dr-03", name: "可可牛奶（120oz）", nameEn: "", price: 40, modifierGroups: ["hotCold"] },
+      { id: "dr-04", name: "Tree Top 蘋果汁（120oz）", nameEn: "", price: 30, modifierGroups: ["hotCold"] },
+      { id: "dr-05", name: "鮮奶茶（140oz）", nameEn: "", price: 35, modifierGroups: ["hotCold"] },
+      { id: "dr-06", name: "非基改豆漿（140oz）", nameEn: "", price: 25, modifierGroups: ["hotCold"] },
+      { id: "dr-07", name: "紅茶（140oz）", nameEn: "", price: 20, modifierGroups: ["hotCold"] },
+      { id: "dr-08", name: "豆漿紅茶（140oz）", nameEn: "", price: 25, modifierGroups: ["hotCold"] },
     ],
   },
 ];
