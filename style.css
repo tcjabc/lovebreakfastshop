@@ -61,6 +61,41 @@ body {
   opacity: 0.65;
 }
 
+/* Signed-in indicator — same [hidden]-override idiom as .cart-bar/
+   .confirm-screen below (a bare `display` rule on a [hidden]-toggled
+   element silently wins over the browser's own [hidden] handling —
+   see CLAUDE.md's hidden/toggle bug note — so the override is
+   required here too, not optional). */
+.member-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.member-badge[hidden] {
+  display: none;
+}
+
+.member-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(43, 33, 28, 0.08); /* placeholder while the image loads */
+}
+
+.member-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Search — sticky, sits directly below the header. */
 .search-bar {
   position: sticky;

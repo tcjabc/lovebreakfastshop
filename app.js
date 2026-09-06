@@ -656,6 +656,24 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
   };
 }
 
+// Reveals the header's signed-in indicator (see .member-badge in
+// style.css / index.html) — only ever called for a logged-in tester
+// (from maybeTesterLogin() below), so it's never shown to anyone else.
+// Deliberately just name/avatar for now — the anchor point future
+// member features (order history, points, stored value) will attach
+// to, not the finished member UI.
+function showMemberBadge(profile) {
+  const avatar = document.getElementById("member-avatar");
+  if (profile.pictureUrl) {
+    avatar.src = profile.pictureUrl;
+    avatar.hidden = false;
+  } else {
+    avatar.hidden = true; // not every LINE profile has a picture set
+  }
+  document.getElementById("member-name").textContent = profile.displayName || "";
+  document.getElementById("member-badge").hidden = false;
+}
+
 // Tester-gated LIFF login — see isTesterMode() in supabase-config.js
 // for the single gate this depends on (don't add a second tester
 // check anywhere else). Non-testers must see zero difference here:
@@ -696,6 +714,7 @@ async function maybeTesterLogin() {
     result.userId = profile.userId;
     result.isTest = true;
     result.profile = profile;
+    showMemberBadge(profile);
   } catch (err) {
     console.error("[Tester] maybeTesterLogin failed — checkout continues unaffected", err);
   }

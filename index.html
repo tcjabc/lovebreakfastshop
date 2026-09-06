@@ -25,6 +25,18 @@
       <h1 id="shop-name">Loading…</h1>
       <p id="shop-note" class="pickup-note"></p>
     </div>
+
+    <!-- Signed-in indicator — hidden by default, only ever shown to a
+         tester after a successful LIFF login (see showMemberBadge()
+         in app.js). Deliberately minimal (name/avatar, no dropdown) —
+         the anchor point future member features (order history,
+         points, stored value) will attach to, not the finished member
+         UI. Non-testers, or a tester before their first checkout,
+         never see this — the header looks exactly as it does today. -->
+    <div id="member-badge" class="member-badge" hidden>
+      <img id="member-avatar" class="member-avatar" alt="" hidden />
+      <span id="member-name" class="member-name"></span>
+    </div>
   </header>
 
   <div class="search-bar">
