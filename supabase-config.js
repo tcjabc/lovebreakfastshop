@@ -41,7 +41,11 @@ function makeShortId() {
 // stampDiscount is the amount (if any) a Weekday Stamp Card redemption
 // already took off `total` — recorded so the printed receipt (see
 // print.js) can show why the item lines don't sum to the total.
-async function insertOrder({ items, total, note, userId, isTest, id, paymentMethod, stampDiscount }) {
+// pickupSlot is the ISO timestamp already reserved via the
+// reserve_pickup_slot() RPC (see submitOrder() in app.js) *before*
+// this is ever called — insertOrder() itself never reserves anything,
+// just records which slot the caller already secured.
+async function insertOrder({ items, total, note, userId, isTest, id, paymentMethod, stampDiscount, pickupSlot }) {
   const shortId = makeShortId();
   const row = {
     short_id: shortId,
@@ -53,6 +57,7 @@ async function insertOrder({ items, total, note, userId, isTest, id, paymentMeth
     is_test: Boolean(isTest),
     payment_method: paymentMethod || "cash_on_pickup",
     stamp_discount: stampDiscount || 0,
+    pickup_slot: pickupSlot || null,
   };
   if (id) row.id = id;
 

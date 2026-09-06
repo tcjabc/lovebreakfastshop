@@ -180,6 +180,16 @@
       </label>
     </div>
 
+    <!-- Pickup time slot — required before submitting; see
+         renderPickupSlotSection()/submitOrder() in app.js. Every option
+         is labeled with its full date, not just the time, since the
+         offered list may be today's remaining slots or tomorrow's full
+         list depending on when checkout is opened (getAvailablePickupSlots())
+         — the date is what makes that unambiguous either way. Reuses
+         .note-input's styling rather than inventing new select chrome. -->
+    <label class="note-label" for="pickup-slot-select">取餐時間</label>
+    <select id="pickup-slot-select" class="note-input"></select>
+
     <label class="note-label" for="order-note">備註</label>
     <input id="order-note" class="note-input" type="text" placeholder="例如：不要香菜" />
     <button id="submit-order" class="submit-btn">送出訂單</button>

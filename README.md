@@ -466,14 +466,34 @@ Check the printer's manual for its GB18030 or Big5 codepage command,
 and let me know the model — I'll adjust `print.js` to send the right
 codepage-switch command before printing.
 
-## How pickup time is estimated
+## Pickup time slots
 
-Each order's wait estimate = (items in that order × ~3 min) + (orders
-already ahead in the queue × ~4 min buffer), with a 10-minute floor.
-These numbers are guesses to start with — once you've run it for a
-week, tell me the real average prep times and I'll tune
-`AVG_MINUTES_PER_ITEM` and `QUEUE_BUFFER_MINUTES` in
-`supabase-config.js` to match.
+Checkout now reserves a real 15-minute slot rather than showing a
+probabilistic estimate — the customer picks one, the app checks it in
+atomically, and the confirmation/receipt shows the actual committed
+time. Schema (`orders.pickup_slot`, `pickup_slots`,
+`reserve_pickup_slot()`) already exists; not repeated here since
+README.md's usual role is documenting SQL you still need to run
+yourself, and this was set up directly.
+
+Slot start times are 6:00–8:45 Asia/Taipei in 15-minute steps (12/day,
+`SLOT_LENGTH_MINUTES`/`PICKUP_WINDOW_START_HOUR`/`PICKUP_WINDOW_END_HOUR`
+in `app.js`), capped at `MAX_ORDERS_PER_SLOT` (6) orders each. The
+picker offers today's remaining slots (earliest = now + 30min, rounded
+up to the next 15-minute mark) if any are left before the window
+closes, otherwise tomorrow's full list — see `getAvailablePickupSlots()`.
+Submitting calls `reserve_pickup_slot()` first, before anything else in
+the order sequence (stamp redemption, stored-value spend, the insert
+itself) — a slot that fills between selection and submit shows a clear
+message and refreshes the picker rather than silently failing or
+blocking checkout.
+
+**`estimateWaitMinutes()`/`getQueueCount()`/`AVG_MINUTES_PER_ITEM`/
+`QUEUE_BUFFER_MINUTES` (`supabase-config.js`) are no longer called from
+anywhere** — checkout used to show their queue-based estimate here
+before real reserved slots existed. Left in place rather than deleted,
+in case they're wanted again in some form; safe to remove once you've
+seen slot booking land.
 
 ## Later upgrades (optional, still mostly free)
 

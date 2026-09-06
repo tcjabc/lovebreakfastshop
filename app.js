@@ -607,6 +607,162 @@ function confirmAddOptions() {
 }
 
 // ------------------------------------------------------------
+// Pickup time slots — 15-minute slots across the shop's 6:00-9:00AM
+// Asia/Taipei window. Reservation itself is atomic and authoritative
+// server-side (reserve_pickup_slot() RPC, taken/p_max race-safe via a
+// single UPDATE) — everything here is just deciding what to show and
+// pre-checking availability for display, never the real guarantee.
+//
+// Same "shift by the fixed +8h offset, read UTC fields as Taipei-local
+// fields" trick as the Weekday Stamp Card's date math
+// (supabase/functions/_shared/taipeiWeek.ts) — duplicated here rather
+// than shared, since there's no module boundary between this browser
+// script and that Deno runtime.
+// ------------------------------------------------------------
+
+const SLOT_LENGTH_MINUTES = 15;
+const MAX_ORDERS_PER_SLOT = 6;
+const PICKUP_WINDOW_START_HOUR = 6; // 6:00 Asia/Taipei
+const PICKUP_WINDOW_END_HOUR = 9; // 9:00 Asia/Taipei — exclusive, so the last slot starts 8:45
+const PICKUP_TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const PICKUP_TAIPEI_WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"]; // Date.getUTCDay() index, Taipei-shifted
+
+// Current Taipei-local calendar date, as UTC-numbered fields (month is
+// 0-11, matching Date.UTC()'s own convention, not the 1-12 used
+// elsewhere in this file's isTaipeiFriday()-adjacent code).
+function taipeiNowParts() {
+  const shifted = new Date(Date.now() + PICKUP_TAIPEI_OFFSET_MS);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate(),
+  };
+}
+
+// The real UTC Date instant for a given Taipei calendar day + local
+// hour/minute.
+function taipeiDateTime(year, month, day, hour, minute) {
+  return new Date(Date.UTC(year, month, day, hour, minute) - PICKUP_TAIPEI_OFFSET_MS);
+}
+
+function addTaipeiDays({ year, month, day }, days) {
+  const shifted = new Date(Date.UTC(year, month, day) + days * 24 * 60 * 60 * 1000);
+  return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth(), day: shifted.getUTCDate() };
+}
+
+// All slot start times (as real Date instants) for one Taipei calendar
+// day — 12 of them at the current constants (6:00 to 8:45).
+function buildSlotsForDay(taipeiDay) {
+  const slots = [];
+  for (let hour = PICKUP_WINDOW_START_HOUR; hour < PICKUP_WINDOW_END_HOUR; hour++) {
+    for (let minute = 0; minute < 60; minute += SLOT_LENGTH_MINUTES) {
+      slots.push(taipeiDateTime(taipeiDay.year, taipeiDay.month, taipeiDay.day, hour, minute));
+    }
+  }
+  return slots;
+}
+
+// The slot list to actually offer right now: today's remaining slots
+// (earliest selectable = now + 30min, rounded UP to the next 15-minute
+// boundary) if any remain before the window's last slot, otherwise
+// tomorrow's full list — never an empty picker. Whether "today" even
+// has any remaining slots (window not yet reached, mid-window, or
+// already closed for the day) all fall out of the same >= filter below
+// rather than needing separate cases for each.
+function getAvailablePickupSlots() {
+  const today = taipeiNowParts();
+  const todaySlots = buildSlotsForDay(today);
+
+  const earliestMs = Date.now() + 30 * 60 * 1000;
+  const shifted = new Date(earliestMs + PICKUP_TAIPEI_OFFSET_MS);
+  const roundedMinutes = Math.ceil(shifted.getUTCMinutes() / SLOT_LENGTH_MINUTES) * SLOT_LENGTH_MINUTES;
+  const earliestSlot = new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate(), shifted.getUTCHours(), roundedMinutes) -
+      PICKUP_TAIPEI_OFFSET_MS
+  );
+
+  const remainingToday = todaySlots.filter((slot) => slot.getTime() >= earliestSlot.getTime());
+  if (remainingToday.length > 0) return remainingToday;
+
+  return buildSlotsForDay(addTaipeiDays(today, 1));
+}
+
+// "9/8 (二) 06:00" — always includes the date, not just the time,
+// since the offered list may be today's remainder or tomorrow's full
+// list depending on when checkout is opened; the date is what makes
+// that unambiguous either way.
+function formatPickupSlotLabel(slotDate) {
+  const shifted = new Date(slotDate.getTime() + PICKUP_TAIPEI_OFFSET_MS);
+  const month = shifted.getUTCMonth() + 1;
+  const day = shifted.getUTCDate();
+  const weekday = PICKUP_TAIPEI_WEEKDAY_LABELS[shifted.getUTCDay()];
+  const hour = String(shifted.getUTCHours()).padStart(2, "0");
+  const minute = String(shifted.getUTCMinutes()).padStart(2, "0");
+  return `${month}/${day} (${weekday}) ${hour}:${minute}`;
+}
+
+// Current `taken` count for each candidate slot, keyed by its UTC
+// epoch ms (not the raw string Supabase returns, which isn't
+// guaranteed to match `.toISOString()`'s exact formatting) — a slot
+// with no row yet reads as 0 taken, same as the RPC itself treats it.
+// On a fetch failure, returns an empty Map (every slot reads as 0/
+// available) rather than blocking the picker — this is purely a
+// display pre-check; reserve_pickup_slot() is the real, atomic
+// enforcement regardless of what got shown here.
+async function getPickupSlotTakenCounts(slots) {
+  const { data, error } = await supabaseClient
+    .from("pickup_slots")
+    .select("slot, taken")
+    .in(
+      "slot",
+      slots.map((s) => s.toISOString())
+    );
+
+  if (error) {
+    console.error("[Pickup] slot taken-count fetch failed", error);
+    return new Map();
+  }
+
+  const takenByMs = new Map();
+  (data || []).forEach((row) => takenByMs.set(new Date(row.slot).getTime(), row.taken));
+  return takenByMs;
+}
+
+// Rebuilds #pickup-slot-select from scratch — called on every
+// openSheet() (times/availability can both change between opens) and
+// again after a reserve_pickup_slot() rejection (see submitOrder()) to
+// show the now-current picture with the just-filled slot disabled.
+// Full slots are shown, not hidden — disabled + labeled 已滿, so a
+// returning customer sees why a time they remember is gone rather than
+// it silently not being there. Selects the first available slot by
+// default; if every candidate is full (each slot × 6 orders — this
+// shop would need to be extraordinarily busy), the select ends up with
+// no valid value at all, which submitOrder() checks for explicitly.
+async function renderPickupSlotSection() {
+  const select = document.getElementById("pickup-slot-select");
+  const candidates = getAvailablePickupSlots();
+  const takenByMs = await getPickupSlotTakenCounts(candidates);
+
+  select.innerHTML = "";
+  let firstAvailableValue = null;
+  candidates.forEach((slot) => {
+    const iso = slot.toISOString();
+    const taken = takenByMs.get(slot.getTime()) || 0;
+    const full = taken >= MAX_ORDERS_PER_SLOT;
+
+    const option = document.createElement("option");
+    option.value = iso;
+    option.textContent = formatPickupSlotLabel(slot) + (full ? "（已滿）" : "");
+    option.disabled = full;
+    select.appendChild(option);
+
+    if (!full && firstAvailableValue === null) firstAvailableValue = iso;
+  });
+
+  if (firstAvailableValue) select.value = firstAvailableValue;
+}
+
+// ------------------------------------------------------------
 // Checkout sheet
 // ------------------------------------------------------------
 
@@ -724,6 +880,7 @@ async function openSheet() {
   const amountDue = cartTotal() - (stampDiscount ? stampDiscount.discount : 0);
   document.getElementById("sheet-total").textContent = `NT$${amountDue}`;
   await renderPaymentMethodSection(amountDue);
+  await renderPickupSlotSection();
   document.getElementById("sheet-backdrop").hidden = false;
   document.getElementById("checkout-sheet").hidden = false;
 }
@@ -757,7 +914,7 @@ function buildOrderMessage() {
 // altText reuses buildOrderMessage()'s plain-text summary — it's what
 // LINE shows in push notifications / chat-list previews when the
 // bubble itself can't render, and it's required on every Flex Message.
-function buildOrderFlexMessage(saved, orderItems, total, waitText) {
+function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
   const itemRows = orderItems.map((item) => ({
     type: "box",
     layout: "horizontal",
@@ -814,7 +971,7 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
         layout: "vertical",
         backgroundColor: "#fbefe6",
         paddingAll: "16px",
-        contents: [{ type: "text", text: waitText, size: "xs", color: "#2b211c", wrap: true }],
+        contents: [{ type: "text", text: pickupTimeText, size: "xs", color: "#2b211c", wrap: true }],
       },
     },
   };
@@ -1435,8 +1592,8 @@ async function submitOrder() {
     };
   });
   const rawTotal = cartTotal();
-  const itemCount = cartCount();
   const note = document.getElementById("order-note").value.trim();
+  const selectedSlotIso = document.getElementById("pickup-slot-select").value;
 
   // Only ever "stored_value" if the section is actually visible — a
   // guest or insufficient-balance visitor can never end up on it no
@@ -1453,6 +1610,40 @@ async function submitOrder() {
   const stampDiscount = computeStampDiscount();
 
   try {
+    if (!selectedSlotIso) {
+      // Every candidate slot was full when renderPickupSlotSection()
+      // last ran (see its own comment — six orders × twelve slots is
+      // an extraordinarily busy day for this shop) — nothing to
+      // reserve against, so there's nothing sensible to submit.
+      alert("目前無可預約的取餐時段，請稍後再試");
+      return;
+    }
+
+    // Reserved first, before anything else below — no point spending
+    // stored value or redeeming a stamp-card drink against a pickup
+    // slot that might not even be available. reserve_pickup_slot() is
+    // the real, atomic guarantee (a single UPDATE ... taken < p_max);
+    // renderPickupSlotSection()'s own taken-count display is only ever
+    // a pre-check, so this can still legitimately come back full even
+    // though the slot looked open a moment ago.
+    const { data: reserved, error: reserveError } = await supabaseClient.rpc("reserve_pickup_slot", {
+      p_slot: selectedSlotIso,
+      p_max: MAX_ORDERS_PER_SLOT,
+    });
+
+    if (reserveError || reserved === null) {
+      // Nothing has been touched yet at this point (this runs before
+      // stamp redemption/stored-value spend/insertOrder below), so
+      // there's nothing to roll back either way. Refresh the picker
+      // (the now-full slot shows disabled) and let the customer pick
+      // again rather than silently failing or blocking checkout
+      // entirely.
+      if (reserveError) console.error("[Checkout] reserve_pickup_slot failed", reserveError);
+      alert("該時段已額滿，請重新選擇取餐時間");
+      await renderPickupSlotSection();
+      return;
+    }
+
     // A stored-value spend and/or a stamp-card redemption both need the
     // order's id generated client-side *before* the order itself
     // exists (each is called against it before insertOrder() below) —
@@ -1550,6 +1741,7 @@ async function submitOrder() {
         id: orderId,
         paymentMethod,
         stampDiscount: stampDiscountApplied,
+        pickupSlot: selectedSlotIso,
       });
     } catch (err) {
       console.error(err);
@@ -1572,31 +1764,24 @@ async function submitOrder() {
     // able to flip the UI back to "failed" and prompt a duplicate
     // submission. Each optional step logs and continues on its own.
 
-    let waitMinutes = null;
-    try {
-      // Estimate pickup time from current queue length
-      const queueAhead = await getQueueCount();
-      waitMinutes = estimateWaitMinutes(itemCount, queueAhead - 1); // exclude the order just placed
-    } catch (err) {
-      console.error("Queue estimate failed (order already saved, continuing):", err);
-    }
-    const waitText =
-      waitMinutes != null
-        ? `預估取餐時間：約 ${waitMinutes} 分鐘`
-        : `預估取餐時間：請洽店員`;
+    // A real reserved slot now exists (the RPC above already
+    // guaranteed it) — showing a probabilistic estimate alongside an
+    // actual commitment would just be confusing, so this replaces the
+    // old queue-based estimate entirely rather than showing both.
+    const pickupTimeText = `取餐時間：${formatPickupSlotLabel(new Date(selectedSlotIso))}`;
 
     try {
       // Also drop a copy into the LINE chat so it's visible there too
       // (optional — remove this block if you'd rather rely on the
       // staff tablet only).
       if (liff.isInClient()) {
-        await liff.sendMessages([buildOrderFlexMessage(saved, orderItems, total, waitText)]);
+        await liff.sendMessages([buildOrderFlexMessage(saved, orderItems, total, pickupTimeText)]);
       }
     } catch (err) {
       console.error("LIFF sendMessages failed (order already saved, continuing):", err);
     }
 
-    document.getElementById("confirm-wait").textContent = waitText;
+    document.getElementById("confirm-wait").textContent = pickupTimeText;
     document.getElementById("confirm-order-id").textContent = `訂單編號 #${saved.short_id}`;
 
     closeSheet();

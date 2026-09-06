@@ -684,6 +684,20 @@ body {
   border-bottom: 1px solid var(--clay-line);
 }
 
+/* This unconditional `display: flex` above silently wins over the
+   browser's own [hidden] handling (see CLAUDE.md's hidden/toggle bug
+   note — same pattern already fixed once for .line-login-btn). Cart
+   item rows never hit this (they're added/removed from the DOM
+   entirely, never toggled via [hidden]), but #stamp-discount-row
+   shares this class and IS toggled via [hidden] every openSheet() —
+   without this override it stayed visibly showing "-NT$0" for every
+   checkout, discount or not, despite `.hidden` correctly reading true
+   in JS. Found while testing pickup slots, unrelated to that feature,
+   fixed here since it's a real bug already live in production. */
+.sheet-item-row[hidden] {
+  display: none;
+}
+
 .sheet-item-mods {
   font-size: 12px;
   color: var(--color-text);
