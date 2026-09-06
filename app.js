@@ -810,6 +810,38 @@ async function loginWithLine() {
   }
 }
 
+// Single source for the three member-benefit rows shown identically
+// in #benefits-card and the checkout auth dialog (#checkout-auth-dialog)
+// — edit the copy here, not in index.html, so the two can't drift
+// apart. renderBenefitRows() builds the same {placeholder, caption}
+// markup used before this was factored out — same .benefit-row/
+// .benefit-placeholder/.benefit-caption classes, same styling.
+const MEMBER_BENEFIT_CAPTIONS = [
+  "累積點數，兌換優惠與免費商品！",
+  "儲值餘額，結帳更快速，取餐無縫接軌。",
+  "優先顯示最愛餐點，下次點餐更省時！",
+];
+
+function renderBenefitRows(container) {
+  container.innerHTML = "";
+  MEMBER_BENEFIT_CAPTIONS.forEach((caption) => {
+    const row = document.createElement("div");
+    row.className = "benefit-row";
+
+    const placeholder = document.createElement("div");
+    placeholder.className = "benefit-placeholder";
+    placeholder.setAttribute("aria-hidden", "true");
+
+    const captionEl = document.createElement("p");
+    captionEl.className = "benefit-caption";
+    captionEl.textContent = caption;
+
+    row.appendChild(placeholder);
+    row.appendChild(captionEl);
+    container.appendChild(row);
+  });
+}
+
 function openBenefitsCard() {
   document.getElementById("benefits-backdrop").hidden = false;
   document.getElementById("benefits-card").hidden = false;
@@ -994,6 +1026,8 @@ async function init() {
   wireUpUI();
   renderMenu();
   updateCartBar(); // renderMenu() doesn't touch the cart bar itself — reflect a restored cart's count/total right away
+  renderBenefitRows(document.getElementById("benefits-rows"));
+  renderBenefitRows(document.getElementById("checkout-benefits-rows"));
 
   try {
     await liff.init({ liffId: LIFF_ID });

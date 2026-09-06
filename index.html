@@ -118,18 +118,10 @@
       <h2>會員福利</h2>
       <button id="benefits-close" class="benefits-close-btn" aria-label="close">✕</button>
     </div>
-    <div class="benefit-row">
-      <div class="benefit-placeholder" aria-hidden="true"></div>
-      <p class="benefit-caption">累積點數，兌換優惠與免費商品！</p>
-    </div>
-    <div class="benefit-row">
-      <div class="benefit-placeholder" aria-hidden="true"></div>
-      <p class="benefit-caption">儲值餘額，結帳更快速，取餐無縫接軌。</p>
-    </div>
-    <div class="benefit-row">
-      <div class="benefit-placeholder" aria-hidden="true"></div>
-      <p class="benefit-caption">優先顯示最愛餐點，下次點餐更省時！</p>
-    </div>
+    <!-- Rows are rendered by renderBenefitRows() (app.js) from one
+         shared MEMBER_BENEFIT_CAPTIONS list — also used for
+         #checkout-benefits-rows below, so the two can't drift apart. -->
+    <div id="benefits-rows" class="benefit-rows"></div>
     <button id="benefits-login" class="line-login-btn">
       <img class="line-login-icon" src="assets/line-icon.png" alt="" />
       <span class="line-login-divider" aria-hidden="true"></span>
@@ -146,12 +138,18 @@
   <section id="checkout-auth-dialog" class="checkout-sheet" hidden aria-label="Sign in or continue as guest">
     <div class="sheet-handle"></div>
     <h2>登入或以訪客結帳 Sign in or check out as a guest</h2>
-    <button id="checkout-auth-line" class="line-login-btn">
-      <img class="line-login-icon" src="assets/line-icon.png" alt="" />
-      <span class="line-login-divider" aria-hidden="true"></span>
-      <span class="line-login-text">與LINE連動</span>
-    </button>
-    <button id="checkout-auth-guest" class="close-sheet-btn">以訪客身份下單 Place order as guest</button>
+    <div id="checkout-benefits-rows" class="benefit-rows"></div>
+    <!-- Side by side above the mobile breakpoint, stacked below it —
+         see .checkout-auth-actions in style.css for why (legibility
+         at genuinely narrow widths beats forcing the layout). -->
+    <div class="checkout-auth-actions">
+      <button id="checkout-auth-line" class="line-login-btn">
+        <img class="line-login-icon" src="assets/line-icon.png" alt="" />
+        <span class="line-login-divider" aria-hidden="true"></span>
+        <span class="line-login-text">與LINE連動</span>
+      </button>
+      <button id="checkout-auth-guest" class="close-sheet-btn">以訪客身份下單 Place order as guest</button>
+    </div>
   </section>
 
   <!-- Confirmation -->

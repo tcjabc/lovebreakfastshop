@@ -695,6 +695,76 @@ body {
   cursor: pointer;
 }
 
+/* Checkout auth dialog's LINE-button/guest-option pair. Stacked by
+   default (mobile) — this is the legibility fallback, not just a
+   loading state, so it has to look intentional on its own, not merely
+   "not yet upgraded" to the side-by-side layout below. The wrapper
+   itself carries the outer vertical spacing (matching .line-login-btn's
+   own standalone isolation-zone margin) so the two buttons' own
+   margins can be zeroed out here rather than
+   stacking on top of the wrapper's. */
+.checkout-auth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.checkout-auth-actions .line-login-btn {
+  margin: 0;
+}
+
+.checkout-auth-actions .close-sheet-btn {
+  margin-top: 0;
+}
+
+/* Benefits card's standalone button has no neighbor to wrap around,
+   so it can center/cap as soon as the sheet is comfortably wider than
+   a phone — 480px, same "no longer phone-narrow" threshold used
+   elsewhere. This is independent of the checkout dialog's breakpoint
+   below, which has a real constraint this button doesn't. */
+@media (min-width: 480px) {
+  #benefits-card > .line-login-btn {
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+/* Checkout dialog's side-by-side breakpoint. The LINE button
+   (flex: 0 1 400px, so it shrinks with the container instead of
+   forcing an overflow) and the guest option (flex: 1 1 auto, its text
+   free to wrap) share the row — a single unwrapped line for the guest
+   text needs ~578px, but that's a "looks ideal" bar, not the actual
+   legibility floor: forcing the row layout narrower and reading the
+   guest text's real line count (Range.getClientRects().length, not
+   just eyeballing) showed a clean 2-line wrap from ~365px up, and it
+   only degrades to a cramped 3-line wrap — the real "broken" point —
+   below that, right where the ~360px "genuinely narrow" phones live.
+   The LINE button itself stays comfortably legible the whole way down
+   (229px wide with room to spare at 365px). 370px below sits just
+   above that measured 365px transition. (This breakpoint has moved
+   twice: 740px assumed the guest text was still bilingual/long: 580px
+   corrected the text-length assumption but still targeted a zero-wrap
+   "ideal" rather than the actual legibility floor; 370px is the
+   result of directly testing where the layout actually breaks.) */
+@media (min-width: 370px) {
+  .checkout-auth-actions {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .checkout-auth-actions .line-login-btn {
+    flex: 0 1 400px; /* same 400px cap as the benefits card's button — never grows past it, can shrink if the sheet itself is narrower */
+  }
+
+  .checkout-auth-actions .close-sheet-btn {
+    flex: 1 1 auto;
+    width: auto;
+  }
+}
+
 /* Confirmation */
 .confirm-screen {
   position: fixed;
