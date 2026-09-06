@@ -124,6 +124,42 @@ const SUPABASE_ANON_KEY = "eyJ...";
 
 5. Re-upload the folder to Netlify
 
+### Feature flags (tester gating for the upcoming LIFF login flow)
+
+Optional until you're ready to test LINE login — run this whenever
+that starts. In the same SQL editor:
+
+```sql
+create table feature_flags (
+  line_user_id text primary key,
+  is_tester boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+alter table feature_flags enable row level security;
+
+-- The app only ever needs to READ its own flag to decide whether to
+-- show the (still in-progress) login flow. No insert/update/delete
+-- policy is created, so those stay denied for the anon key —
+-- toggling a tester on/off is a manual row edit you make here in the
+-- SQL editor (or the Table Editor UI), never something the app does.
+create policy "anyone can read flags" on feature_flags for select using (true);
+```
+
+To make someone a tester, you first need their LINE user ID — there's
+no admin UI for this yet, so get it once manually (e.g. a temporary
+`console.log(await liff.getProfile())` while testing on that person's
+phone, or from LINE's own developer tools), then:
+
+```sql
+insert into feature_flags (line_user_id, is_tester) values ('U1234...', true);
+```
+
+**Before this does anything**, the LIFF app's channel needs the
+`profile` scope enabled in the LINE Developers Console (Step 3 above
+only turned on `chat_message.write`) — without it, `liff.getProfile()`
+throws for everyone, tester or not.
+
 ## Step 7 — Set up the staff tablet
 
 1. On the Android tablet, open **Chrome** and go to your Netlify URL +

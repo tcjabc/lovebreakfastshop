@@ -65,14 +65,38 @@ this repo.
 
 ## LINE integration status
 
-* `LIFF\_ID` in `app.js` is still a placeholder
-(`PUT\_YOUR\_LIFF\_ID\_HERE`) — a real LIFF app hasn't been created in
-the LINE Developers Console yet. Until it is, LIFF-only features
-(`liff.sendMessages()`, `liff.closeWindow()`) silently no-op — this
-is intentional graceful degradation, not a bug (see `liff.isInClient()`
-guards in `app.js`).
-* No LINE Login / `liff.getProfile()` is used anywhere yet — orders
-are fully anonymous, no customer identity is captured or required.
+* `LIFF\_ID` in `app.js` is a real LIFF app ID as of commit `c8b9470`
+— this section previously said it was still the placeholder; that
+was stale, not current. `liff.isInClient()` still guards
+`liff.sendMessages()`/`liff.closeWindow()` so the app degrades
+gracefully outside LINE.
+* **`liff.getProfile()` now exists, but only behind a tester gate —
+orders are still fully anonymous for everyone else.**
+`maybeTesterLogin()` in `app.js` (called at the top of
+`submitOrder()`) does `liff.isLoggedIn()` → `liff.login()` if
+needed → `liff.getProfile()`, but only for a user `isTesterMode()`
+(in `supabase-config.js`) says is a tester — everyone else's
+checkout is untouched, no login prompt. This is a smoke test for
+the login mechanics ahead of Loyalty (step 5 below); the resulting
+profile isn't attached to the order yet (`orders` has no identity
+column — see schema above).
+* **The tester gate — `isTesterMode(userId)` in `supabase-config.js`
+— is the ONLY place in the codebase that should ever decide "is
+this user a tester."** Backed by a `feature_flags` table
+(`line_user_id` primary key, `is_tester` boolean; see README.md →
+"Feature flags (tester gating)" for the SQL/RLS). Toggling a tester
+is a Supabase row edit, never a code change. When the login flow
+ships for everyone, delete `isTesterMode()` and its one call site
+in `maybeTesterLogin()` rather than leaving it in place unused.
+* The LIFF channel's scopes only had `chat_message.write` enabled
+(see README.md Step 3) — `profile` scope needs to be turned on in
+the LINE Developers Console before `liff.getProfile()` will work for
+anyone, tester or not. Not something this repo's code can do.
+* Bootstrapping the very first tester is manual: `isTesterMode()` can
+only recognize a LINE user id that's already been through
+`liff.getProfile()` once, so seeding that first `feature_flags` row
+needs the id obtained once outside this flow (e.g. a temporary
+`console.log` during testing) — see README.md for the exact steps.
 
 ## Hidden/toggle bug pattern (context for git history)
 
@@ -144,11 +168,16 @@ real hosted URL exists, and swap the real `LIFF\_ID` into `app.js`.
 4. **Tune `AVG\_MINUTES\_PER\_ITEM` / `QUEUE\_BUFFER\_MINUTES`** in
 `supabase-config.js` once there's a week or two of real prep-time
 data — current values are starting guesses.
-5. **(Later) Loyalty system** — add `liff.login()` with `profile`
-scope, a `members` table (`line\_user\_id`, `points`,
-`total\_orders`) keyed to the LINE user ID, auto-increment on
-order insert, and a checkout-time reward-application step. This is
-additive to the existing schema, not a rebuild.
+5. **(Later) Loyalty system** — a first slice of this exists now,
+tester-gated (see "LINE integration status" above):
+`liff.login()`/`getProfile()` runs end-to-end at checkout, but only
+for a user flagged in `feature_flags`, and the profile isn't
+persisted anywhere yet. Still to do: a `members` table
+(`line\_user\_id`, `points`, `total\_orders`) keyed to the LINE user
+ID, auto-increment on order insert, a checkout-time
+reward-application step, and — once the login flow is proven out —
+removing the tester gate so it applies to everyone. Additive to the
+existing schema, not a rebuild.
 
 ## Things NOT to change without discussion
 

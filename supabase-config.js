@@ -60,3 +60,41 @@ function estimateWaitMinutes(itemCount, queueAhead) {
   const queueTime = queueAhead * QUEUE_BUFFER_MINUTES;
   return Math.max(10, prepTime + queueTime); // floor of 10 min
 }
+
+// ============================================================
+// FEATURE FLAGS — tester gating for in-progress features (right now:
+// the LIFF login flow in app.js, ahead of it becoming mandatory for
+// everyone). See README.md → "Set up feature flags" for the table's
+// SQL and RLS policy.
+//
+// THE SINGLE GATE CHECK: this is the only place in the codebase that
+// should ever decide "is this user a tester" — every call site should
+// call isTesterMode(), never re-implement or inline this check. That
+// keeps toggling a tester on/off a pure Supabase row update
+// (`update feature_flags set is_tester = true where line_user_id =
+// '...'`), never a code change or redeploy. When the gated feature
+// ships for everyone, delete this function and its call site(s)
+// rather than leaving a second copy of the check behind.
+//
+// Note this can only recognize a user who already has a LINE user id
+// to check — i.e. someone who has been through liff.getProfile() at
+// least once before (see maybeTesterLogin() in app.js). Seeding the
+// very first tester row therefore needs that id obtained once
+// manually (e.g. a temporary console.log of liff.getProfile() during
+// testing) before it can be inserted into this table.
+// ============================================================
+async function isTesterMode(userId) {
+  if (!userId) return false; // no LINE identity yet — never a tester
+
+  const { data, error } = await supabaseClient
+    .from("feature_flags")
+    .select("is_tester")
+    .eq("line_user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[FeatureFlags] isTesterMode check failed — treating as non-tester", error);
+    return false; // fail closed: never accidentally expose a WIP flow
+  }
+  return Boolean(data && data.is_tester);
+}

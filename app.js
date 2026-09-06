@@ -656,7 +656,50 @@ function buildOrderFlexMessage(saved, orderItems, total, waitText) {
   };
 }
 
+// Tester-gated LIFF login smoke test — see isTesterMode() in
+// supabase-config.js for the single gate this depends on (don't add a
+// second tester check anywhere else). Non-testers must see zero
+// difference here: this function never shows anything, delays
+// checkout, or blocks it — every await is wrapped so a failure
+// anywhere just logs and checkout proceeds exactly as before.
+//
+// Doesn't attach the resulting profile to the order yet (the `orders`
+// table has no identity column — see CLAUDE.md) — this only proves
+// isLoggedIn()/login()/getProfile() actually work end-to-end for a
+// real tester before the flow becomes mandatory for everyone.
+async function maybeTesterLogin() {
+  try {
+    // Safe, silent peek: inside the LINE app LIFF auto-logs in during
+    // liff.init() with no visible prompt, so this already succeeds
+    // for most in-LINE sessions without calling liff.login() at all.
+    // Outside LINE (or before any prior login), isLoggedIn() is just
+    // false here — no UI, no redirect, userId stays null.
+    let userId = null;
+    if (liff.isLoggedIn()) {
+      const profile = await liff.getProfile();
+      userId = profile.userId;
+    }
+
+    if (!(await isTesterMode(userId))) return; // unchanged checkout for everyone else
+
+    // Only testers ever reach here, so only testers can ever hit
+    // liff.login()'s visible consent/redirect (relevant mainly
+    // outside LINE — inside LINE this branch rarely fires since
+    // isLoggedIn() above is already true).
+    if (!liff.isLoggedIn()) {
+      liff.login();
+      return; // liff.login() navigates away — nothing after this runs
+    }
+    const profile = await liff.getProfile();
+    console.log(`[Tester] LIFF login flow OK — ${profile.displayName} (${profile.userId})`);
+  } catch (err) {
+    console.error("[Tester] maybeTesterLogin failed — checkout continues unaffected", err);
+  }
+}
+
 async function submitOrder() {
+  await maybeTesterLogin();
+
   const submitBtn = document.getElementById("submit-order");
   submitBtn.disabled = true;
   submitBtn.textContent = "送出中… Sending…";
