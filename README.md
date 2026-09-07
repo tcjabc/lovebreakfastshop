@@ -461,10 +461,20 @@ second dialog, hiding its login button when already signed in.
 
 ### If Chinese text prints as garbled characters
 
-This depends on your specific printer model's supported codepages.
-Check the printer's manual for its GB18030 or Big5 codepage command,
-and let me know the model — I'll adjust `print.js` to send the right
-codepage-switch command before printing.
+Root cause and fix confirmed on real hardware (2026-09-07) — it's
+**not** a printer codepage-switch command. `FS ( C` (select UTF-8
+mode) was tried on the real printer and made no difference at all —
+identical bytes either way. This printer decodes raw bytes through
+its own built-in GB18030-ish table by default rather than UTF-8, so
+`print.js`'s `textToBytes()` now pre-encodes every Chinese/fullwidth/
+punctuation character used anywhere in the app to GB18030 bytes
+before sending (`GB18030_TABLE`). Confirmed correct on a real
+Xprinter XP-Q200, including a full site-wide character sweep and a
+real customer order.
+
+If a *different* printer model still garbles Chinese text after this
+fix, it likely defaults to a different codepage — check its manual
+and let me know the model so `print.js` can be adjusted for it.
 
 ## Pickup time slots
 
@@ -494,6 +504,24 @@ anywhere** — checkout used to show their queue-based estimate here
 before real reserved slots existed. Left in place rather than deleted,
 in case they're wanted again in some form; safe to remove once you've
 seen slot booking land.
+
+## Daily order numbers
+
+Real orders get a plain, daily-resetting sequential number (`007`)
+instead of the earlier random letter+number code (`A482`) — much
+easier for staff to sort/find by. Schema (`daily_order_counters`,
+`next_daily_order_number()`) already exists; not repeated here since
+README.md's usual role is documenting SQL you still need to run
+yourself, and this was set up directly (same pattern as the pickup
+slots schema above).
+
+Bucketed by placement time (Asia/Taipei calendar day when the order
+is submitted), not by pickup time — a late-night order for tomorrow's
+early pickup slot still gets today's next number, not tomorrow's #1.
+Test-mode orders (`is_test = true`) keep the old random letter+number
+id instead of touching the counter — both so real customer numbers
+stay gap-free, and so a test order is visually distinguishable from a
+real one at a glance.
 
 ## Later upgrades (optional, still mostly free)
 
