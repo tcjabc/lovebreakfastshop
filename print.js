@@ -6,6 +6,7 @@
 // ESC/POS command bytes
 const ESC = 0x1b;
 const GS = 0x1d;
+const FS = 0x1c;
 
 // Known-working printer(s), by USB vendor/product ID. requestDevice()
 // below only offers matching devices in Chrome's picker instead of
@@ -428,3 +429,83 @@ window.ThermalPrinter = {
   buildCustomerLabelPreview: buildCustomerLabelModel,
   CHARS_PER_LINE,
 };
+// ============================================================
+// TEMPORARY DIAGNOSTIC — delete this whole block once calibration
+// is done. Prints one test ticket with:
+//   1. A digit "ruler" at normal size, so you can count how many
+//      characters actually fit before the paper's real right edge
+//      (compare against CHARS_PER_LINE = 48 above).
+//   2. The same ruler at large/double-width size (kitchen ticket
+//      item lines use this — budget is roughly half of #1).
+//   3. The same Chinese test phrase printed twice: once exactly as
+//      today's code sends it (should come out garbled, matching
+//      your test print), and once after sending "FS ( C" to select
+//      UTF-8 mode (the proposed fix) — so you can compare both on
+//      one receipt and see whether the fix actually works on this
+//      printer.
+// Adds one floating button to the page to trigger it — no changes
+// to staff.html or staff.js needed.
+// ============================================================
+function buildCalibrationTicket() {
+  const bytes = [];
+  const push = (...arr) => bytes.push(...arr);
+  const pushText = (str) => push(...textToBytes(str));
+
+  push(ESC, 0x40); // init
+  push(ESC, 0x61, 0x00); // left align
+
+  pushText("=== RULER: normal size ===\n");
+  let ruler48 = "";
+  for (let i = 1; i <= 48; i++) ruler48 += String(i % 10);
+  pushText(ruler48 + "\n");
+
+  pushText("\n=== RULER: large size ===\n");
+  push(GS, 0x21, 0x11); // double width + height
+  let ruler24 = "";
+  for (let i = 1; i <= 24; i++) ruler24 += String(i % 10);
+  pushText(ruler24 + "\n");
+  push(GS, 0x21, 0x00); // back to normal size
+
+  pushText("\n=== CHINESE ENCODING TEST ===\n");
+  pushText("A) as sent today (expect garbled):\n");
+  pushText("測試中文 樂福早餐店\n\n");
+
+  push(FS, 0x28, 0x43, 0x02, 0x00, 0x30, 0x02); // FS ( C fn=48 m=2: select UTF-8 mode
+  pushText("B) after FS ( C UTF-8 select:\n");
+  pushText("測試中文 樂福早餐店\n");
+
+  push(ESC, 0x64, FEED_LINES_BEFORE_CUT);
+  push(GS, 0x56, 0x00); // full cut
+  return new Uint8Array(bytes);
+}
+
+window.ThermalPrinter.printCalibrationTicket = async function () {
+  if (!navigator.usb) throw new Error("WebUSB not supported — use Chrome on Android.");
+  if (!printerDevice) {
+    const reconnected = await silentReconnect();
+    if (!reconnected) await connectPrinter();
+  }
+  const iface = printerDevice.configuration.interfaces[0];
+  const endpoint = iface.alternate.endpoints.find((e) => e.direction === "out");
+  await printerDevice.transferOut(endpoint.endpointNumber, buildCalibrationTicket());
+};
+
+(function addCalibrationButton() {
+  const btn = document.createElement("button");
+  btn.textContent = "🧪 Test Calibration Print";
+  btn.style.cssText =
+    "position:fixed;bottom:16px;right:16px;z-index:9999;padding:10px 14px;" +
+    "background:#c0392b;color:#fff;border:none;border-radius:6px;font-size:14px;";
+  btn.addEventListener("click", async () => {
+    try {
+      await window.ThermalPrinter.printCalibrationTicket();
+    } catch (err) {
+      console.error(err);
+      alert("Calibration print failed: " + err.message);
+    }
+  });
+  document.body.appendChild(btn);
+})();
+// ============================================================
+// END TEMPORARY DIAGNOSTIC
+// ============================================================
