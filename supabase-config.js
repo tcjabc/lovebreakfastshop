@@ -14,12 +14,46 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_
 const AVG_MINUTES_PER_ITEM = 3;
 const QUEUE_BUFFER_MINUTES = 4; // slack per order already ahead in queue
 
-function makeShortId() {
-  // Short human-friendly order code, e.g. "A482"
+function makeTestShortId() {
+  // Test-mode orders (is_test=true, see isTesterMode() below) never go
+  // through the real daily counter — this old random letter+number
+  // scheme (e.g. "B482") is kept for them ONLY, now doubling as a
+  // built-in "this is a test order" marker: it looks nothing like a
+  // real order's plain zero-padded daily number, so staff can tell
+  // them apart at a glance without needing a separate flag on-screen.
   return (
     String.fromCharCode(65 + Math.floor(Math.random() * 26)) +
     Math.floor(100 + Math.random() * 900)
   );
+}
+
+// Atomically claims the next number in today's sequence via the
+// next_daily_order_number() Postgres function (see README.md/SCHEMA —
+// run once in the Supabase SQL editor, not version-controlled here,
+// same as reserve_pickup_slot()). The function does one INSERT ...
+// ON CONFLICT DO UPDATE ... RETURNING, so two orders landing at the
+// same instant can't ever be handed the same number — the DB, not
+// this client, is what makes it atomic.
+//
+// "Today" is the function's own now()-based Taipei calendar day, i.e.
+// purely when the order was actually placed — deliberately NOT the
+// order's pickup_slot day, so a late-night order for tomorrow's early
+// slots still gets today's next number rather than jumping ahead into
+// a day that hasn't started yet. Zero-padded to 3 digits ("007") so
+// every real order's id lines up visually on staff.html's cards; if a
+// single day ever exceeds 999 orders this naturally overflows to 4
+// digits rather than breaking.
+async function makeRealShortId() {
+  const { data, error } = await supabaseClient.rpc("next_daily_order_number");
+  if (error) {
+    // Extremely unlikely (the function is a single statement against a
+    // one-row table), but a real order must still get *some* id rather
+    // than fail checkout outright — falls back to the old random
+    // scheme, same as a test order, rather than throwing.
+    console.error("[Orders] next_daily_order_number failed — falling back to a random id", error);
+    return makeTestShortId();
+  }
+  return String(data).padStart(3, "0");
 }
 
 // userId comes from the current session's LINE login (see
@@ -67,7 +101,7 @@ async function insertOrder({
   stampSnapshot,
   balanceSnapshot,
 }) {
-  const shortId = makeShortId();
+  const shortId = isTest ? makeTestShortId() : await makeRealShortId();
   const row = {
     short_id: shortId,
     items,

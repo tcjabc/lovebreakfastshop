@@ -414,7 +414,17 @@ const GB18030_TABLE = {
   "＋": [0xa3, 0xab],
   "，": [0xa3, 0xac],
   "．": [0xa3, 0xae],
-  "：": [0xa3, 0xba]
+  "：": [0xa3, 0xba],
+  // These three were missed by the original character scan (it only
+  // covered CJK Unified Ideographs, CJK punctuation, and fullwidth
+  // forms) — found by re-scanning every file for ALL non-ASCII
+  // characters and diffing against this table. ●/○ are the stamp-card
+  // day circles (confirmed garbled on a real order printout); … is
+  // padColumns()'s truncation ellipsis, used whenever an item name is
+  // too long to fit next to its price.
+  "●": [0xa1, 0xf1],
+  "○": [0xa1, 0xf0],
+  "…": [0xa1, 0xad]
 };
 
 function textToBytes(str) {
@@ -603,6 +613,17 @@ function buildCustomerLabelModel(order) {
   const divider = "-".repeat(CHARS_PER_LINE);
   const lines = [];
 
+  // Member name prints first — large + centered — ahead of even the
+  // shop name, so it's the first thing visible when the customer looks
+  // at the receipt for pickup. (Placement judgment call: "first" could
+  // instead have meant first within the member-info block below the
+  // shop header — flag if this isn't what you meant and it's a
+  // one-line move.) Guest orders have no order.memberName, so the shop
+  // name is simply the first line printed, same as before.
+  if (order.memberName) {
+    lines.push({ text: order.memberName, align: "center", bold: true, size: "large" });
+  }
+
   lines.push({ text: order.shopName, align: "center", bold: true, size: "normal" });
   lines.push({ text: `訂單編號：${order.shortId}`, align: "left", bold: false, size: "normal" });
 
@@ -610,10 +631,6 @@ function buildCustomerLabelModel(order) {
     lines.push({ text: `取餐時間：${formatPickupTime(order.pickupSlot)}`, align: "left", bold: false, size: "normal" });
   }
 
-  // order.memberName comes from orders.member_name (see receiptDataFor()
-  // in staff.js) — set only for a logged-in member's order (see
-  // submitOrder() in app.js), so this whole block is omitted entirely
-  // for a guest order rather than printing empty/placeholder lines.
   // stampSnapshot/balanceSnapshot are this member's progress/balance as
   // of THIS order, not re-derived from their current real state, so an
   // old receipt stays an accurate record even after later orders change
@@ -622,8 +639,6 @@ function buildCustomerLabelModel(order) {
   // to set it apart from the plain Mon-Thu run without needing a
   // different glyph at all.
   if (order.memberName) {
-    lines.push({ text: order.memberName, align: "left", bold: true, size: "normal" });
-
     const days = (order.stampSnapshot && order.stampSnapshot.days) || [false, false, false, false];
     const unlocked = Boolean(order.stampSnapshot && order.stampSnapshot.unlocked);
     const dayCircles = days.map((filled) => (filled ? "●" : "○")).join("");
@@ -689,8 +704,6 @@ function buildCustomerLabelModel(order) {
   if (order.note) {
     lines.push({ text: `備註：${order.note}`, align: "left", bold: false, size: "normal" });
   }
-
-  lines.push({ text: `訂單編號 #${order.shortId}   ${order.time}`, align: "left", bold: false, size: "normal" });
 
   return lines;
 }
@@ -816,103 +829,3 @@ window.ThermalPrinter = {
   buildCustomerLabelPreview: buildCustomerLabelModel,
   CHARS_PER_LINE,
 };
-
-// ============================================================
-// TEMPORARY DIAGNOSTIC — delete this whole block once calibration
-// is done. Prints one test ticket with:
-//   1. A digit "ruler" at normal size, so you can count how many
-//      characters actually fit before the paper's real right edge
-//      (compare against CHARS_PER_LINE = 48 above).
-//   2. The same ruler at large/double-width size (kitchen ticket
-//      item lines use this — budget is roughly half of #1).
-//   3. The same Chinese test phrase printed twice: once exactly as
-//      today's code sends it (should come out garbled, matching
-//      your test print), and once after sending "FS ( C" to select
-//      UTF-8 mode (the proposed fix) — so you can compare both on
-//      one receipt and see whether the fix actually works on this
-//      printer.
-// Adds one floating button to the page to trigger it — no changes
-// to staff.html or staff.js needed.
-// ============================================================
-function buildCalibrationTicket() {
-  const bytes = [];
-  const push = (...arr) => bytes.push(...arr);
-  const pushText = (str) => push(...textToBytes(str));
-
-  push(ESC, 0x40); // init
-  push(ESC, 0x61, 0x00); // left align
-
-  pushText("=== RULER: normal size ===\n");
-  let ruler48 = "";
-  for (let i = 1; i <= 48; i++) ruler48 += String(i % 10);
-  pushText(ruler48 + "\n");
-
-  pushText("\n=== RULER: large size ===\n");
-  push(GS, 0x21, 0x11); // double width + height
-  let ruler24 = "";
-  for (let i = 1; i <= 24; i++) ruler24 += String(i % 10);
-  pushText(ruler24 + "\n");
-  push(GS, 0x21, 0x00); // back to normal size
-
-  pushText("\n=== CHINESE TEXT TEST (GB18030 fix) ===\n");
-  pushText("測試中文 樂福早餐店\n");
-  pushText("肉排總匯 生菜鮪魚 可可牛奶\n");
-  pushText("訂單編號 取餐時間 總計 現場付款\n\n");
-
-  pushText("=== FULL CHARACTER SET (every CJK char\n");
-  pushText("used anywhere in the app) ===\n");
-  pushText("、。「」一三上下不中乳乾二五付以件份伺但\n");
-  pushText("作你使來例值備價優儲先克兌免入全六再冰出\n");
-  pushText("列利到前力功加動包化匯午半印即厚原友取可\n");
-  pushText("司合名吐味命咔咖品員哥商啟啡啦單器四回培\n");
-  pushText("基堡場塊墨天失奶如始姓嫩存完客室尋對小尚\n");
-  pushText("工巧已帳常店度廚式待後從德心快愛應成我或\n");
-  pushText("房手打扣找抓折抵拉招拿按捲排接推換搜擇據\n");
-  pushText("支收改敗數文料新方日早時更最會月朋服未末\n");
-  pushText("本杯板果查柳根格條棉榛樂機檬檸次款正段汁\n");
-  pushText("沙法泡泥泰洋消測滿漢漿潛火炸為無煉煎熟熱\n");
-  pushText("燻片牌牛物特狗玉現球理甜生用登發的皮目省\n");
-  pushText("看確碼示福稍積符算米粒糕糖紀約紅素累結網\n");
-  pushText("線編縫總繫繼續美義聊聯肉脆腸腿自至與艇芋\n");
-  pushText("芥花茶草荷莎莓菜蔔蔥蔬薦薯藍蘋蘿處號蛋蜂\n");
-  pushText("蜜表製西要覽解訂計訪註詢試該認誤調請豆象\n");
-  pushText("豬貝買費購起足路身車軌軟載輕輸辣近送速連\n");
-  pushText("週進選酥酪醬重金錄錯鎖鐵門閉開間關集雞非\n");
-  pushText("頌預顆額類顧顯食飲餃餅餐餘香鬆魚鮪鮮麵黃\n");
-  pushText("點！（）＋，．：\n");
-
-  push(ESC, 0x64, FEED_LINES_BEFORE_CUT);
-  push(GS, 0x56, 0x00); // full cut
-  return new Uint8Array(bytes);
-}
-
-window.ThermalPrinter.printCalibrationTicket = async function () {
-  if (!navigator.usb) throw new Error("WebUSB not supported — use Chrome on Android.");
-  if (!printerDevice) {
-    const reconnected = await silentReconnect();
-    if (!reconnected) await connectPrinter();
-  }
-  const iface = printerDevice.configuration.interfaces[0];
-  const endpoint = iface.alternate.endpoints.find((e) => e.direction === "out");
-  await printerDevice.transferOut(endpoint.endpointNumber, buildCalibrationTicket());
-};
-
-(function addCalibrationButton() {
-  const btn = document.createElement("button");
-  btn.textContent = "🧪 Test Calibration Print";
-  btn.style.cssText =
-    "position:fixed;bottom:16px;right:16px;z-index:9999;padding:10px 14px;" +
-    "background:#c0392b;color:#fff;border:none;border-radius:6px;font-size:14px;";
-  btn.addEventListener("click", async () => {
-    try {
-      await window.ThermalPrinter.printCalibrationTicket();
-    } catch (err) {
-      console.error(err);
-      alert("Calibration print failed: " + err.message);
-    }
-  });
-  document.body.appendChild(btn);
-})();
-// ============================================================
-// END TEMPORARY DIAGNOSTIC
-// ============================================================
