@@ -29,19 +29,16 @@ body {
   position: relative; /* anchors #member-menu's position: absolute below */
 }
 
-/* Logo placeholder — swap the whole div for a 42px <img> once the real
-   logo exists (see comment in index.html). Tinted from --color-text
-   since this header sits on the light page background. */
+/* Real logo (was a dashed-circle placeholder — see git history if
+   ever reverting). object-fit: cover isn't strictly needed for this
+   square 200x200 source, but keeps this safe if the logo file is ever
+   swapped for a non-square image later. */
 .logo-placeholder {
   width: 42px;
   height: 42px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: rgba(43, 33, 28, 0.06);
-  border: 1.6px dashed rgba(43, 33, 28, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  object-fit: cover;
 }
 
 .shop-header-text {
@@ -619,8 +616,9 @@ body {
   border-bottom: none;
 }
 
-/* Same dashed-border/tinted-background treatment as .logo-placeholder
-   above, just square (rounded corners, not a circle) — these are
+/* Dashed-border/tinted-background placeholder treatment (.logo-placeholder
+   above used to share this before the real logo replaced it — see git
+   history) — square with rounded corners, not a circle. These are
    meant to eventually hold a real icon/image per benefit. */
 .benefit-placeholder {
   width: 44px;
