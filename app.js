@@ -944,6 +944,114 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
     ],
   }));
 
+  const bodyContents = [
+    ...itemRows,
+    { type: "separator", margin: "md", color: "#fbdfda" },
+    {
+      type: "box",
+      layout: "horizontal",
+      margin: "md",
+      contents: [
+        { type: "text", text: "總計", weight: "bold", size: "md", color: "#e0132b" },
+        { type: "text", text: `NT$${total}`, weight: "bold", size: "md", color: "#e0132b", align: "end" },
+      ],
+    },
+    // Payment status — unconditional (always one or the other), same
+    // wording/logic as the printed receipt's buildCustomerLabelModel()
+    // in print.js, so the chat card and the physical receipt can never
+    // disagree about how an order was paid for.
+    {
+      type: "text",
+      text: saved.payment_method === "stored_value" ? "已用儲值支付" : "現場付款",
+      weight: "bold",
+      size: "sm",
+      color: "#e0132b",
+      margin: "md",
+    },
+  ];
+
+  // Member-only block — stamp progress + stored-value balance, both
+  // omitted entirely for a guest order rather than showing empty/zero
+  // placeholders. Reads straight off `saved` (the just-inserted order
+  // row), same source print.js's receiptDataFor() uses, rather than
+  // threading extra params through from submitOrder() — one less way
+  // for the chat card and the printed receipt to drift apart.
+  if (saved.member_name) {
+    const days = (saved.stamp_snapshot && saved.stamp_snapshot.days) || [false, false, false, false];
+    const unlocked = Boolean(saved.stamp_snapshot && saved.stamp_snapshot.unlocked);
+    const dayLabels = ["一", "二", "三", "四"];
+
+    // Five small rounded chips (cornerRadius = half of width/height
+    // makes a "box" render as a circle) — filled red for an earned
+    // weekday, pale pink outline-ish for not-yet. Friday's chip is
+    // visually distinct (gold, with a 🎁 once unlocked) since it's the
+    // redemption day, not another day to earn — same idea as print.js
+    // bracketing the Friday circle, just with color instead of ( ).
+    const stampDots = days.map((filled, i) => ({
+      type: "box",
+      layout: "vertical",
+      flex: 1,
+      alignItems: "center",
+      spacing: "xs",
+      contents: [
+        {
+          type: "box",
+          layout: "vertical",
+          width: "18px",
+          height: "18px",
+          cornerRadius: "9px",
+          backgroundColor: filled ? "#e0132b" : "#f5d9d3",
+          contents: [],
+        },
+        { type: "text", text: dayLabels[i], size: "xxs", color: "#8a6f63", align: "center" },
+      ],
+    }));
+
+    const fridayDot = {
+      type: "box",
+      layout: "vertical",
+      flex: 1,
+      alignItems: "center",
+      spacing: "xs",
+      contents: [
+        {
+          type: "box",
+          layout: "vertical",
+          width: "18px",
+          height: "18px",
+          cornerRadius: "9px",
+          backgroundColor: unlocked ? "#f4b53f" : "#f5d9d3",
+          justifyContent: "center",
+          alignItems: "center",
+          contents: unlocked ? [{ type: "text", text: "🎁", size: "xxs" }] : [],
+        },
+        { type: "text", text: "五", size: "xxs", color: "#8a6f63", align: "center" },
+      ],
+    };
+
+    bodyContents.push(
+      { type: "separator", margin: "md", color: "#fbdfda" },
+      { type: "text", text: "本週集點進度", size: "xs", color: "#8a6f63", margin: "md" },
+      {
+        type: "box",
+        layout: "horizontal",
+        margin: "sm",
+        spacing: "sm",
+        contents: [...stampDots, fridayDot],
+      }
+    );
+
+    if (saved.balance_snapshot != null) {
+      bodyContents.push({
+        type: "text",
+        text: `儲值餘額 NT$${saved.balance_snapshot}`,
+        size: "xs",
+        color: "#8a6f63",
+        margin: "sm",
+      });
+    }
+  }
+
   return {
     type: "flex",
     altText: buildOrderMessage() + `\n訂單編號 #${saved.short_id}`,
@@ -965,25 +1073,18 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
         backgroundColor: "#fbefe6",
         paddingAll: "16px",
         spacing: "sm",
-        contents: [
-          ...itemRows,
-          { type: "separator", margin: "md", color: "#fbdfda" },
-          {
-            type: "box",
-            layout: "horizontal",
-            margin: "md",
-            contents: [
-              { type: "text", text: "總計", weight: "bold", size: "md", color: "#e0132b" },
-              { type: "text", text: `NT$${total}`, weight: "bold", size: "md", color: "#e0132b", align: "end" },
-            ],
-          },
-        ],
+        contents: bodyContents,
       },
       footer: {
         type: "box",
         layout: "vertical",
         backgroundColor: "#fbefe6",
         paddingAll: "16px",
+        // pickupTimeText is already the real reserved slot ("取餐時間：
+        // 9/8 (二) 06:00"), not a probabilistic estimate — see
+        // submitOrder()'s own comment where this is built. Nothing to
+        // change here; noting it since it was flagged as a possible
+        // pending item.
         contents: [{ type: "text", text: pickupTimeText, size: "xs", color: "#2b211c", wrap: true }],
       },
     },
