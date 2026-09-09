@@ -718,25 +718,91 @@ let printerDevice = null;
 // either requestDevice()'s picker or getDevices()'s silent list), and
 // runs the same live init-command test either way. Shared so
 // connectPrinter() and silentReconnect() below can't drift apart.
+//
+// TEMPORARY DIAGNOSTIC — every step below is wrapped in its own
+// try/catch purely so the console shows exactly which WebUSB call
+// throws (staff.js's click handler only has one catch-all around the
+// whole connect sequence, so today the same generic alert fires
+// whether open(), selectConfiguration(), claimInterface(), or
+// transferOut() is the one failing). Delete the per-step try/catch
+// wrapping once the actual failing step is identified — the calls
+// themselves are unchanged, this only adds console.log/console.error
+// around them.
 async function openAndClaim(device) {
   printerDevice = device;
-  await printerDevice.open();
+  console.log(
+    `[ThermalPrinter] device selected: vendorId=0x${device.vendorId.toString(16)} productId=0x${device.productId.toString(
+      16
+    )} productName=${device.productName} serialNumber=${device.serialNumber} opened=${device.opened}`
+  );
+
+  try {
+    await printerDevice.open();
+    console.log("[ThermalPrinter] step 1/4 open() succeeded");
+  } catch (err) {
+    console.error("[ThermalPrinter] step 1/4 open() FAILED:", err.name, err.message, err);
+    throw err;
+  }
+
   if (printerDevice.configuration === null) {
-    await printerDevice.selectConfiguration(1);
+    try {
+      await printerDevice.selectConfiguration(1);
+      console.log("[ThermalPrinter] step 2/4 selectConfiguration(1) succeeded");
+    } catch (err) {
+      console.error("[ThermalPrinter] step 2/4 selectConfiguration(1) FAILED:", err.name, err.message, err);
+      throw err;
+    }
+  } else {
+    console.log("[ThermalPrinter] step 2/4 selectConfiguration() skipped — configuration already set:", printerDevice.configuration.configurationValue);
   }
 
   // Log what's actually on the device before assuming anything —
   // interface/endpoint numbers vary by printer model and aren't
-  // visible from the top-level device object.
+  // visible from the top-level device object. Also logging each
+  // interface's class/subclass/protocol: the device descriptor
+  // reports 0/0/0 for this printer (composite/vendor-specific), which
+  // means the REAL class info — and confirmation that interfaces[0]
+  // is actually the printer interface and not some other function on
+  // the same device — lives here instead.
+  //
+  // Reading `iface.alternates[0]` here, not `iface.alternate` —
+  // confirmed via the DevTools session that crashed this exact block:
+  // `.alternate` (singular) is only populated by Chrome once
+  // claimInterface() has resolved for that interface, and this log
+  // runs before any interface has been claimed. `.alternates` (the
+  // array) holds the real descriptor data from device enumeration
+  // regardless of claim state, so it's readable immediately.
   console.log("[ThermalPrinter] interfaces:", printerDevice.configuration.interfaces);
   printerDevice.configuration.interfaces.forEach((iface) => {
-    console.log(`[ThermalPrinter] interface ${iface.interfaceNumber} endpoints:`, iface.alternate.endpoints);
+    const alt = iface.alternates[0];
+    console.log(
+      `[ThermalPrinter] interface ${iface.interfaceNumber}: class=${alt.interfaceClass} subclass=${alt.interfaceSubclass} protocol=${alt.interfaceProtocol} endpoints:`,
+      alt.endpoints
+    );
   });
 
   const iface = printerDevice.configuration.interfaces[0];
-  await printerDevice.claimInterface(iface.interfaceNumber); // real number from the device, not assumed
+  try {
+    await printerDevice.claimInterface(iface.interfaceNumber); // real number from the device, not assumed
+    console.log(`[ThermalPrinter] step 3/4 claimInterface(${iface.interfaceNumber}) succeeded`);
+  } catch (err) {
+    // Known quirk on some thermal printers: claiming the interface
+    // triggers a soft reset/re-enumeration, which can invalidate the
+    // device handle Chrome just handed us. If that's happening here,
+    // this is where it'll surface — commonly as a NetworkError or
+    // NotFoundError whose message mentions the device disconnecting.
+    console.error(`[ThermalPrinter] step 3/4 claimInterface(${iface.interfaceNumber}) FAILED:`, err.name, err.message, err);
+    throw err;
+  }
 
-  const outEndpoint = iface.alternate.endpoints.find((e) => e.direction === "out");
+  // `iface` above was captured from `configuration.interfaces[0]`
+  // BEFORE claimInterface() resolved — per the DevTools finding,
+  // Chrome doesn't retroactively populate that cached object's
+  // `.alternate`, even after the claim succeeds; only a freshly
+  // re-read USBInterface reflects it. Using `iface.alternates[0]`
+  // sidesteps that entirely (see the comment above) rather than
+  // re-reading `printerDevice.configuration.interfaces[0]` again here.
+  const outEndpoint = iface.alternates[0].endpoints.find((e) => e.direction === "out");
   if (!outEndpoint) {
     throw new Error("No OUT endpoint found on this printer's interface.");
   }
@@ -751,9 +817,9 @@ async function openAndClaim(device) {
   // picker matched it.
   try {
     await printerDevice.transferOut(outEndpoint.endpointNumber, new Uint8Array([ESC, 0x40]));
-    console.log("[ThermalPrinter] test transferOut succeeded — printer accepted the init command");
+    console.log("[ThermalPrinter] step 4/4 test transferOut succeeded — printer accepted the init command");
   } catch (err) {
-    console.error("[ThermalPrinter] test transferOut failed:", err);
+    console.error("[ThermalPrinter] step 4/4 test transferOut FAILED:", err.name, err.message, err);
     throw err;
   }
 
@@ -803,8 +869,14 @@ async function printOrder(order) {
   // connectPrinter() — cheap, and avoids relying on state surviving
   // between the two calls. See connectPrinter()'s console.log for
   // this printer's actual interface/endpoint numbers.
+  //
+  // `.alternates[0]`, not `.alternate` — see the matching comment in
+  // openAndClaim() above for why: `.alternate` is only reliably
+  // populated on a USBInterface object read fresh after its
+  // claimInterface() has resolved, and using `.alternates[0]`
+  // sidesteps that timing dependency entirely.
   const iface = printerDevice.configuration.interfaces[0];
-  const endpoint = iface.alternate.endpoints.find((e) => e.direction === "out");
+  const endpoint = iface.alternates[0].endpoints.find((e) => e.direction === "out");
 
   // Two separate documents, same short_id, sent as two sequential
   // jobs (each ends in its own cut) over the one connected printer.
