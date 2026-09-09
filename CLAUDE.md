@@ -35,7 +35,75 @@ NOT work for `staff.html` — WebUSB requires a secure context
 |`print.js`|ESC/POS receipt building (separate kitchen ticket + customer label documents) + WebUSB printer connection (Chrome-on-Android only)|
 |`supabase-config.js`|Supabase client + order insert/favourites/order-history helpers, shared by customer and staff apps|
 |`supabase/functions/`|Deno Edge Functions for Stored Value and the Weekday Stamp Card — the only code in this repo that runs server-side. Verifies identity (LINE ID token or staff PIN) before touching money; see "Server-side identity verification" below|
-|`README.md`|Full setup walkthrough (LINE Developer Console, LIFF, Supabase, Netlify/Cloudflare, printer pairing)|
+|`worker.js`|Cloudflare Worker entrypoint — PIN-gates `/staff/*` only; every other request is served as a plain static asset without this file running at all. See "Deployment: Cloudflare Workers (not Pages)" below|
+|`wrangler.jsonc`|Worker config: `main` (`worker.js`), the `assets` binding, and `assets.run_worker_first` scoping the gate to `/staff/*`|
+|`.assetsignore`|Excludes `.git`, `.gitignore`, `CLAUDE.md`, `README.md`, `.dev.vars`, and `node_modules` from the public static-asset upload — see "Deployment" below before touching this or `assets.directory`|
+|`README.md`|Full setup walkthrough (LINE Developer Console, LIFF, Supabase, Cloudflare Workers, printer pairing)|
+
+## Deployment: Cloudflare Workers (not Pages)
+
+This repo deploys as a **Cloudflare Worker with static assets**
+(`wrangler deploy`), not Cloudflare Pages — there is no `functions/`
+directory convention here, and Pages' auto-detected `_middleware.js`
+routing does not apply. `wrangler.jsonc` sets `main: "worker.js"`,
+`assets.directory: "./"`, `assets.binding: "ASSETS"`, and
+`assets.run_worker_first: ["/staff/*"]` — that last field means
+`worker.js`'s `fetch` handler only ever runs for requests under
+`/staff`; every other request (the whole customer ordering app) is
+served straight from the `assets` binding with zero Worker invocation,
+same as before the staff PIN gate existed. Live at a `*.workers.dev`
+subdomain (or a custom domain if one's attached to the Worker).
+
+**Status as of 2026-09-10:** an earlier pass at the staff PIN gate
+wrongly assumed this project was Cloudflare Pages and shipped a
+`functions/staff/_middleware.js` — Pages' directory convention, never
+read by a Workers deploy, so it would silently never have run. Fixed
+by replacing it with `worker.js`; if you're reading an old summary of
+this work that mentions a `functions/` directory or Pages Functions,
+it's describing that mistake, not the current setup.
+
+Secrets (`STAFF_DASHBOARD_PIN`, `STAFF_DASHBOARD_SECRET` — see "Staff
+dashboard PIN gate" below) are set via `wrangler secret put <NAME>`,
+or from the Cloudflare dashboard (Workers & Pages → this Worker →
+Settings → Variables and Secrets) — never hardcoded or committed.
+
+**`.assetsignore`** exists because `assets.directory: "./"` is the
+repo root: without it, `wrangler deploy` would publish `.git/` (the
+entire commit history and object store), `.gitignore`, `CLAUDE.md`,
+and `README.md` as publicly fetchable static files — confirmed via
+`wrangler deploy --dry-run` before this file existed. Don't widen
+`assets.directory` away from a `.assetsignore`-covered root, and don't
+delete or narrow `.assetsignore`'s entries, without re-checking that
+this doesn't reopen that exposure — see "Things NOT to change without
+discussion" below.
+
+## Staff dashboard PIN gate
+
+`/staff/*` (the whole subtree — `staff/index.html` and its sibling
+`staff-style.css`/`staff.js`, not just the index page) requires a PIN
+before any file in it is served, enforced entirely server-side in
+`worker.js` — there is no client-side check to bypass by viewing page
+source, since an unauthenticated request never receives the real
+dashboard markup at all.
+
+* Session: a `staff_session` cookie, `<timestamp>.<hmac>`, where hmac
+  is HMAC-SHA256(timestamp, `STAFF_DASHBOARD_SECRET`) via the Web
+  Crypto API, valid for 12 hours. Set with
+  `HttpOnly; Secure; SameSite=Lax; Path=/staff` on a correct PIN.
+* PIN comparison is constant-time (never `===`), mirroring
+  `supabase/functions/_shared/verifyStaffPin.ts`'s helper of the same
+  shape — kept as a separate copy since Edge Functions and Workers are
+  different runtimes with no shared import path between them.
+* Two secrets, `STAFF_DASHBOARD_PIN` and `STAFF_DASHBOARD_SECRET` —
+  **deliberately not named `STAFF_PIN`/`STAFF_SECRET`.** `STAFF_PIN` is
+  already a distinct Supabase Edge Function secret (see
+  `supabase/functions/_shared/verifyStaffPin.ts`) gating a different,
+  unrelated thing — the "會員儲值" top-up panel *inside* this same
+  dashboard, checked via `topup-stored-value` and
+  `get-stored-value-balance-staff`. Different platform (Supabase
+  secrets vs. Cloudflare Worker secrets), so there's no actual
+  technical collision, but reusing the name for two different gates
+  would invite exactly the mix-up these distinct names avoid.
 
 ## Backend: Supabase
 
@@ -360,6 +428,17 @@ redemption state; see "Server-side identity verification" above
 * Don't trust a client-supplied `user_id` inside a Stored Value/Stamp
 Card Edge Function — always re-derive it from `verifyLineToken()` (or
 gate on `verifyStaffPin()` for the staff-initiated ones)
+* Don't widen `assets.directory` in `wrangler.jsonc`, or delete/narrow
+`.assetsignore`, without re-checking why each entry is there —
+`assets.directory` is the repo root, and `.assetsignore` is the only
+thing stopping `.git/` (full history) and other non-public files from
+being deployed as public static assets; see "Deployment: Cloudflare
+Workers (not Pages)" above
+* Don't reuse `STAFF_PIN`/`STAFF_SECRET` as the Cloudflare Worker
+secret names for the staff dashboard PIN gate — those would collide in
+name (not in mechanism) with the distinct, already-existing Supabase
+`STAFF_PIN` secret; use `STAFF_DASHBOARD_PIN`/`STAFF_DASHBOARD_SECRET`,
+see "Staff dashboard PIN gate" above
 ## Git workflow
 * Never run `git commit` or `git push` automatically after making
 * changes, even if a change is complete and tests pass. The owner

@@ -9,8 +9,11 @@ custom domain.
 
 - Your wife's LINE Official Account (already exists)
 - A LINE Developers account (any personal LINE account can create one)
-- A place to host 4 static files — Netlify, Vercel, Cloudflare Pages, or
-  GitHub Pages all have free tiers that comfortably cover this
+- A place to host the files — Netlify, Vercel, or GitHub Pages all have
+  free tiers that comfortably cover this. (Not Cloudflare **Pages**:
+  this repo is actually set up for Cloudflare **Workers** with static
+  assets — see `wrangler.jsonc` and Step 7 — and the two aren't
+  interchangeable once you get there.)
 
 ## Step 1 — Edit the menu
 
@@ -28,7 +31,11 @@ Easiest option: **Netlify**
 2. Drag the whole `breakfast-order-app` folder onto the Netlify dashboard
 3. It gives you a URL like `https://yourshop-order.netlify.app`
 
-(Vercel and Cloudflare Pages work the same way if you prefer those.)
+(Vercel works the same way if you prefer it. Cloudflare **Pages**
+does not, despite the similar name — this repo's `wrangler.jsonc` is
+configured as a Cloudflare **Worker** with static assets, which Pages
+doesn't run; see Step 7 for why that distinction actually matters
+here, not just naming pedantry.)
 
 ## Step 3 — Create a LINE Login channel + LIFF app
 
@@ -309,8 +316,13 @@ above) before touching money:
 - **`spend-stored-value`** — verifies the LIFF ID token, calls
   `spend_stored_value()`. Returns a distinct `insufficient_funds` error
   code (not a generic failure) if the balance doesn't cover it.
-- **`topup-stored-value`** — verifies a staff PIN (`STAFF_PIN` secret,
-  same as elsewhere), calls `topup_stored_value()` for a `user_id`
+- **`topup-stored-value`** — verifies a staff PIN (`STAFF_PIN`, a
+  Supabase Edge Function secret — distinct from the Cloudflare Worker
+  secrets `STAFF_DASHBOARD_PIN`/`STAFF_DASHBOARD_SECRET` that gate
+  `/staff/` itself; see Step 7. This line used to say "same as
+  elsewhere," which stopped being true once the dashboard gate shipped
+  with its own, deliberately different, PIN), calls
+  `topup_stored_value()` for a `user_id`
   passed directly in the request. Selecting who to top up happens in
   `staff.html`'s "會員儲值" panel (member search by name), which also
   calls `get-stored-value-balance-staff` (same PIN gate) to show a
@@ -478,7 +490,9 @@ second dialog, hiding its login button when already signed in.
    Enter the staff PIN when prompted. `STAFF_DASHBOARD_PIN` and
    `STAFF_DASHBOARD_SECRET` must be set first via `wrangler secret put`
    (or Cloudflare dashboard → Workers & Pages → this Worker →
-   Settings → Variables and Secrets)
+   Settings → Variables and Secrets). See CLAUDE.md's "Deployment:
+   Cloudflare Workers (not Pages)" section for why `.assetsignore`
+   exists alongside `wrangler.jsonc` — don't delete it
 2. Add it to the home screen (Chrome menu → "Add to Home screen") so it
    opens like an app
 3. Plug the USB thermal printer into the tablet (use a USB-OTG
