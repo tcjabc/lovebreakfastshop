@@ -202,14 +202,14 @@ create policy "allow all" on members for all using (true) with check (true);
 
 Once this is in place: a tester's checkout (see above) stamps
 `orders.user_id`/`is_test` and upserts a `members` row automatically —
-nothing further to configure. `staff.html`'s dashboard keeps
+nothing further to configure. `staff/index.html`'s dashboard keeps
 `is_test = true` orders out of the three live columns and out of
 auto-print, showing them instead in their own "🧪 Test Orders" section
 so they're still checkable by hand.
 
 ### Stored Value
 
-**Status:** schema/functions, the staff top-up panel (`staff.html`'s
+**Status:** schema/functions, the staff top-up panel (`staff/index.html`'s
 "會員儲值"), and customer checkout (see below) all exist now — this
 section's own heading used to say "backend only — no staff/checkout UI
 yet," which went stale as soon as the staff panel shipped and is fully
@@ -324,7 +324,7 @@ above) before touching money:
   with its own, deliberately different, PIN), calls
   `topup_stored_value()` for a `user_id`
   passed directly in the request. Selecting who to top up happens in
-  `staff.html`'s "會員儲值" panel (member search by name), which also
+  `staff/index.html`'s "會員儲值" panel (member search by name), which also
   calls `get-stored-value-balance-staff` (same PIN gate) to show a
   balance before confirming the amount.
 - **`get-stored-value-transactions`** — verifies the caller's LIFF ID
