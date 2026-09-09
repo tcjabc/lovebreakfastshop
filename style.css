@@ -71,6 +71,30 @@ body {
   flex-shrink: 0;
 }
 
+/* Stored Value balance, header version — plain text pill, same button-
+   chrome-reset + [hidden]-override idiom as .header-stamp-widget right
+   below (kept as a near-identical, separate rule rather than merged
+   with it, since the two are independent widgets that happen to sit
+   next to each other, not variants of one shared thing). */
+.header-balance-widget {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border: none;
+  background: var(--color-bg-alt);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.header-balance-widget[hidden] {
+  display: none;
+}
+
 /* Weekday Stamp Card, header version — .stamp-circle/.stamp-circle-fri
    below (already sized compact — this is the only place they render
    now, see renderBenefitRows() in app.js) do the actual circle
@@ -796,6 +820,55 @@ body {
   font-size: 13.5px;
   color: var(--color-text);
   opacity: 0.6;
+}
+
+/* Stored Value transaction history (#transactions-sheet) — one
+   .transaction-item per row, same list-row shape as .order-history-item
+   above (border-bottom, last-of-type reset) since both are read-only
+   member-history lists in the same sheet shell. */
+.transaction-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--clay-line);
+}
+
+.transaction-item:last-of-type {
+  border-bottom: none;
+}
+
+.transaction-type {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.transaction-date {
+  font-size: 12px;
+  color: var(--color-text);
+  opacity: 0.6;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.transaction-amount {
+  font-size: 15px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Top-up: a credit, same red-on-tint the stamp discount preview uses
+   for the same reason (.stamp-discount-row above). Deduction: plain
+   text — not an error state, just a debit, so it doesn't need the
+   same visual weight as a discount or a warning. */
+.transaction-amount.positive {
+  color: var(--color-primary);
+}
+
+.transaction-amount.negative {
+  color: var(--color-text);
+  opacity: 0.75;
 }
 
 .sheet-total-row {
