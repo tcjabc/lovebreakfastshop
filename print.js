@@ -40,7 +40,7 @@ const CHARS_PER_LINE = 48;
 const FEED_LINES_BEFORE_CUT = 5;
 
 // Maps every CJK/fullwidth character currently used anywhere in this
-// project (menu.js, app.js, staff.js, print.js, index.html, staff.html)
+// project (menu.js, app.js, staff.js, print.js, index.html, staff/index.html)
 // to its GB18030 byte encoding. Confirmed empirically on the real
 // printer (Xprinter XP-Q200) — it was decoding raw UTF-8 bytes through
 // its own built-in GB18030-ish table by default, which is why Chinese
@@ -818,7 +818,7 @@ async function printOrder(order) {
 }
 
 // Exposed globally for staff.js to call. CHARS_PER_LINE and the two
-// buildXPreview functions let staff.html render an on-screen preview
+// buildXPreview functions let staff/index.html render an on-screen preview
 // of both documents from the exact same layout logic as the real
 // print, without needing a physical printer to check spacing/
 // alignment changes.

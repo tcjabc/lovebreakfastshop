@@ -494,7 +494,7 @@ async function searchMembers(query) {
 
 // Photo + name shown prominently is the safety net against crediting
 // the wrong person when multiple search results come back — see the
-// panel's aria-label / the comment above the markup in staff.html.
+// panel's aria-label / the comment above the markup in staff/index.html.
 function selectMember(member) {
   currentSvMember = member;
   document.getElementById("sv-pin-input").value = "";

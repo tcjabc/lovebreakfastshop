@@ -40,7 +40,7 @@ function makeTestShortId() {
 // order's pickup_slot day, so a late-night order for tomorrow's early
 // slots still gets today's next number rather than jumping ahead into
 // a day that hasn't started yet. Zero-padded to 3 digits ("007") so
-// every real order's id lines up visually on staff.html's cards; if a
+// every real order's id lines up visually on staff/index.html's cards; if a
 // single day ever exceeds 999 orders this naturally overflows to 4
 // digits rather than breaking.
 async function makeRealShortId() {
@@ -61,7 +61,7 @@ async function makeRealShortId() {
 // guest checkout, exactly as every order worked before Membership
 // existed. isTest comes from isTesterMode() below — true only for a
 // logged-in user flagged as a tester, so their orders land in
-// staff.html's Test Orders section instead of the live kitchen queue.
+// staff/index.html's Test Orders section instead of the live kitchen queue.
 //
 // id/paymentMethod/stampDiscount are optional: paymentMethod defaults
 // to 'cash_on_pickup' and stampDiscount to 0 (matching their own DB
@@ -215,7 +215,7 @@ async function removeFavorite(userId, itemId) {
 // Top `limit` item ids by total quantity across this member's own past
 // orders (every order, live or test — this reads a member's own
 // history for their own recommendations, not the kitchen queue, so
-// is_test doesn't apply the way it does in staff.html). [] on fetch
+// is_test doesn't apply the way it does in staff/index.html). [] on fetch
 // failure or genuinely no order history — either way the caller (see
 // renderMemberPicksRow() in app.js) treats that as "nothing to
 // suggest" and hides the row, same as a real empty result.
@@ -274,7 +274,7 @@ async function getMemberOrderHistory(userId, limit = 20) {
 //
 // Its purpose now: once someone IS logged in, decide whether THEIR
 // orders get flagged is_test = true, so the shop owner's own testing
-// orders land in staff.html's separate Test Orders section instead of
+// orders land in staff/index.html's separate Test Orders section instead of
 // the live kitchen queue/auto-print. If you're reading this because
 // you're wondering whether this is dead code left over from the old
 // gate — it isn't; it's called from syncLoggedInProfile() in app.js

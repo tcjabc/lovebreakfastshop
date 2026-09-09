@@ -6,7 +6,7 @@
 // so they can't use the customer-facing get-stored-value-balance
 // function to check someone else's balance before deciding a top-up
 // amount. Plain select, no mutation — same PIN gate as topup-stored-value,
-// used by staff.html's "會員儲值" panel right before a top-up.
+// used by staff/index.html's "會員儲值" panel right before a top-up.
 //
 // Request:  POST { pin, user_id }
 // Success:  200 { ok: true, balance: number }

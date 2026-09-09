@@ -1185,7 +1185,7 @@ function handleLogout() {
 // (supabase-config.js) — it no longer means "gated behind a tester
 // flag to log in at all" (login is available to everyone, by choice);
 // it only flags this specific logged-in user's orders as test orders
-// so they land in staff.html's Test Orders section instead of the
+// so they land in staff/index.html's Test Orders section instead of the
 // live kitchen queue.
 let currentMember = { userId: null, isTest: false, profile: null };
 
