@@ -470,9 +470,15 @@ second dialog, hiding its login button when already signed in.
 ## Step 7 — Set up the staff tablet
 
 1. On the Android tablet, open **Chrome** and go to your site's URL +
-   `/staff/` (e.g. `https://yourshop-order.pages.dev/staff/`) — this is
-   now PIN-gated by a Cloudflare Pages Function
-   (`functions/staff/_middleware.js`); enter the staff PIN when prompted
+   `/staff/` (e.g. `https://yourshop-order.<subdomain>.workers.dev/staff/`)
+   — this is a Cloudflare Workers-with-static-assets deployment
+   (`wrangler deploy`, see `wrangler.jsonc`), and `/staff/` is PIN-gated
+   by `worker.js` (`assets.run_worker_first` scopes it to `/staff/*`
+   only — everything else is still served as a plain static asset).
+   Enter the staff PIN when prompted. `STAFF_DASHBOARD_PIN` and
+   `STAFF_DASHBOARD_SECRET` must be set first via `wrangler secret put`
+   (or Cloudflare dashboard → Workers & Pages → this Worker →
+   Settings → Variables and Secrets)
 2. Add it to the home screen (Chrome menu → "Add to Home screen") so it
    opens like an app
 3. Plug the USB thermal printer into the tablet (use a USB-OTG

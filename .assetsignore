@@ -1,0 +1,7 @@
+.git
+.git/**
+.gitignore
+CLAUDE.md
+README.md
+.dev.vars
+node_modules

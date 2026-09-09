@@ -1,7 +1,14 @@
 {
   "name": "lovebreakfastshop",
+  "main": "worker.js",
   "compatibility_date": "2026-09-04",
   "assets": {
-    "directory": "./"
+    "directory": "./",
+    "binding": "ASSETS",
+    // Only /staff/* invokes worker.js (the PIN gate) -- every other
+    // request (the customer ordering app) is still served directly
+    // from `assets` with no Worker invocation, same as before this
+    // gate existed.
+    "run_worker_first": ["/staff/*"]
   }
 }

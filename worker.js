@@ -1,19 +1,24 @@
 // ============================================================
-// PIN gate for the staff dashboard (/staff/*).
+// Cloudflare Worker entrypoint for lovebreakfastshop.
 //
-// Cloudflare Pages runs this middleware for every request under
-// /staff before anything in that directory is served as a static
-// file — so the real dashboard HTML/CSS/JS never reaches a browser
-// unless a valid session cookie is already present, or a POST here
-// supplies the correct PIN. There is no client-side login check to
-// bypass by viewing source: an unauthenticated request never
-// receives the dashboard markup in the first place.
+// This is a Workers-with-static-assets deployment (`wrangler deploy`),
+// NOT Cloudflare Pages — there is no `functions/` directory convention
+// here (an earlier pass at this PIN gate wrongly assumed Pages and
+// added a functions/staff/_middleware.js that would never have been
+// invoked; that's been removed in favor of this file).
 //
-// Requires two environment variables, set in the Cloudflare Pages
-// dashboard (Settings -> Environment variables, for both Production
-// and Preview) before this works — neither is read from anywhere
-// else in this repo, and neither should ever be hardcoded or
-// committed:
+// wrangler.jsonc scopes `assets.run_worker_first` to ["/staff/*"], so
+// this script's fetch handler only ever runs for requests under
+// /staff — every other request (the customer ordering app: index.html,
+// app.js, menu.js, etc.) is served directly from the `assets` binding
+// with no Worker invocation at all, same as before this gate existed.
+//
+// PIN gate for the staff dashboard (/staff/*): see gateStaffRequest()
+// below. Requires two secrets — set via `wrangler secret put
+// STAFF_DASHBOARD_PIN` / `wrangler secret put STAFF_DASHBOARD_SECRET`,
+// or from the Cloudflare dashboard: Workers & Pages -> this Worker ->
+// Settings -> Variables and Secrets -> Add secret. Never hardcode or
+// commit either one:
 //   STAFF_DASHBOARD_PIN    — the PIN staff type in to open the
 //                            dashboard at all.
 //   STAFF_DASHBOARD_SECRET — a long random string used only to sign
@@ -26,7 +31,7 @@
 // gating a different, unrelated thing — the "會員儲值" top-up panel
 // inside this same dashboard, checked via topup-stored-value and
 // get-stored-value-balance-staff. Different platform (Supabase secrets
-// vs. Cloudflare Pages env vars), so there'd be no actual technical
+// vs. Cloudflare Worker secrets), so there'd be no actual technical
 // collision, but reusing the name for two different gates would still
 // invite exactly the mix-up these distinct names are meant to avoid.
 // ============================================================
@@ -59,8 +64,8 @@ async function hmacHex(message, secret) {
 // than returned early, so a wrong-length guess takes the same code
 // path as any other wrong guess. Mirrors
 // supabase/functions/_shared/verifyStaffPin.ts's helper of the same
-// shape, kept separate here since Edge Functions and Pages Functions
-// are different runtimes with no shared import path between them.
+// shape, kept separate here since Edge Functions and Workers are
+// different runtimes with no shared import path between them.
 function timingSafeEqual(a, b) {
   const aBytes = new TextEncoder().encode(a);
   const bBytes = new TextEncoder().encode(b);
@@ -204,13 +209,16 @@ function htmlResponse(html, status) {
   });
 }
 
-export async function onRequest(context) {
-  const { request, next, env } = context;
+// Returns null when the request already carries a valid session (the
+// caller should fall through and serve the real static file), or a
+// Response to send instead (login form / redirect / error) when it
+// doesn't.
+async function gateStaffRequest(request, env) {
   const url = new URL(request.url);
 
   const sessionCookie = getCookie(request, COOKIE_NAME);
   if (await isValidSession(sessionCookie, env.STAFF_DASHBOARD_SECRET)) {
-    return next();
+    return null;
   }
 
   const isLoginSubmit =
@@ -237,7 +245,22 @@ export async function onRequest(context) {
   }
 
   // No valid session and this isn't a login submission — respond with
-  // the login form directly. Never call next() here: doing so would
+  // the login form directly. Never fall through here: doing so would
   // serve the real dashboard HTML to an unauthenticated request.
   return htmlResponse(loginPageHtml(null), 200);
 }
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const isStaffPath = url.pathname === "/staff" || url.pathname.startsWith("/staff/");
+
+    if (isStaffPath) {
+      const gateResponse = await gateStaffRequest(request, env);
+      if (gateResponse) return gateResponse;
+      // Valid session — fall through to serving the real static file.
+    }
+
+    return env.ASSETS.fetch(request);
+  },
+};
