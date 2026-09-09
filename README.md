@@ -298,7 +298,7 @@ revoke execute on function topup_stored_value from public, anon, authenticated;
 -- service_role retains execute by default — only the Edge Functions can call these.
 ```
 
-Three Edge Functions call this (source in `supabase/functions/`), each
+Four Edge Functions call this (source in `supabase/functions/`), each
 verifying identity first via the shared `_shared/verifyLineToken.ts` /
 `_shared/verifyStaffPin.ts` helpers (see the LINE integration section
 above) before touching money:
@@ -315,6 +315,30 @@ above) before touching money:
   `staff.html`'s "會員儲值" panel (member search by name), which also
   calls `get-stored-value-balance-staff` (same PIN gate) to show a
   balance before confirming the amount.
+- **`get-stored-value-transactions`** — verifies the caller's LIFF ID
+  token, reads that member's own `stored_value_transactions` rows
+  (newest first, capped at 50) for the header balance widget's
+  "儲值紀錄" (transaction history) modal in `app.js`. Read-only, no
+  order itemization — just type (`topup`/`deduction`/`refund`), signed
+  amount, and timestamp; order history's own sheet already covers what
+  was bought.
+
+#### Header balance display + transaction history
+
+The customer app's header shows a member's Stored Value balance at a
+glance, next to the existing 5-circle Weekday Stamp Card widget —
+`#header-balance-widget` in `index.html`, fetched once at login via
+`get-stored-value-balance` (`loadStoredValueBalance()` in `app.js`,
+same call checkout's payment-method section already made) and shown
+even at NT$0, unlike checkout's own balance-covers-the-total-gated
+option below. Tapping it opens a "儲值紀錄" modal listing that
+member's own top-ups and deductions via `get-stored-value-transactions`
+(see above) — this, not the balance itself, is what the member-menu's
+"儲值紀錄" entry also opens. Nothing was orphaned when this replaced
+the member-menu's old "集點進度" entry: that entry only ever opened the
+same shared member-benefits card (`#benefits-card`) that
+`#header-stamp-widget`'s own click handler still opens today, so no
+new home was needed for any explanatory text.
 
 #### Checkout payment method
 

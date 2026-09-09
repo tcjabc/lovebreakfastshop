@@ -23,6 +23,23 @@
          visible; now the group carries it once, so the stamp widget
          and the badge/pill stay adjacent to each other as a unit. -->
     <div class="member-header-group">
+      <!-- Stored Value balance — always visible for a logged-in member,
+           including at NT$0 (not hidden the way the checkout payment
+           choice is when a balance doesn't cover the total — this is
+           just a readout, not a payment option, so there's no "not
+           enough to matter" case). Fetched once at login
+           (loadStoredValueBalance(), same get-stored-value-balance
+           Edge Function/verified-token pattern as checkout's
+           renderPaymentMethodSection()) and refreshed after an order
+           actually pays with stored value (see submitOrder()) — never
+           polled. Shown/hidden in lockstep with #member-badge
+           (showMemberBadge()/showMemberPill()), same as the stamp
+           widget below. Clickable — opens #transactions-sheet (儲值紀錄),
+           the member-menu entry's other, equivalent entry point. -->
+      <button id="header-balance-widget" class="header-balance-widget" type="button" hidden aria-label="儲值紀錄">
+        <span id="header-balance-amount">NT$0</span>
+      </button>
+
       <!-- Compact Weekday Stamp Card status — same fill/cup-icon logic
            and .stamp-circle/.stamp-circle-fri classes as before (see
            refreshStampWidgetUI() in app.js, unchanged), just smaller
@@ -33,8 +50,12 @@
            what the dots mean somewhere. Shown/hidden in lockstep with
            #member-badge (showMemberBadge()/showMemberPill()), not
            fetched separately — reuses loadStampProgress()'s existing
-           stampProgress state. Clickable — opens the same 集點進度 view
-           the member-menu entry does, rather than being purely inert. -->
+           stampProgress state. Clickable — opens the member benefits
+           card (集點/儲值/我的最愛 explainer), rather than being purely
+           inert; this is the same card the "成為會員" pill opens for a
+           guest, not a dedicated 集點進度 view (there never was one —
+           see get-stamp-progress and the removed member-menu-stamp-card
+           entry's history if this needs re-confirming). -->
       <button id="header-stamp-widget" class="header-stamp-widget" type="button" hidden aria-label="集點進度">
         <div class="stamp-circle" data-day="0"></div>
         <div class="stamp-circle" data-day="1"></div>
@@ -62,17 +83,21 @@
 
     <!-- Member menu — a small popover anchored to #member-badge
          (opened/closed by toggleMemberMenu() in app.js). Started as a
-         bare list shell with exactly one entry (登出); 集點進度 is the
-         first of the future entries that comment always meant to
-         accommodate (order history, stored value balance, favourites
-         are still to come) — reuses #benefits-card below rather than a
-         new dialog. Backdrop is a plain click-outside catcher, not a
-         dimming overlay like the sheet dialogs below — this is a small
-         anchored popover, not a full sheet. -->
+         bare list shell with exactly one entry (登出), then grew 訂單紀錄
+         and (briefly) 集點進度. 集點進度 is gone as of the Stored Value
+         history work below — it only ever opened the shared, generic
+         #benefits-card (會員福利 explainer), which stays reachable via
+         #header-stamp-widget's own click handler, so nothing was
+         actually orphaned by removing it (see that button's comment
+         above). 儲值紀錄 takes its slot instead, opening
+         #transactions-sheet — stays at 3 items total, same shell,
+         same 3-item budget. Backdrop is a plain click-outside catcher,
+         not a dimming overlay like the sheet dialogs below — this is a
+         small anchored popover, not a full sheet. -->
     <div id="member-menu-backdrop" class="member-menu-backdrop" hidden></div>
     <div id="member-menu" class="member-menu" role="menu" aria-label="會員選單" hidden>
       <button id="member-menu-order-history" class="member-menu-item" role="menuitem" type="button">訂單紀錄</button>
-      <button id="member-menu-stamp-card" class="member-menu-item" role="menuitem" type="button">集點進度</button>
+      <button id="member-menu-transactions" class="member-menu-item" role="menuitem" type="button">儲值紀錄</button>
       <button id="member-menu-logout" class="member-menu-item" role="menuitem" type="button">登出</button>
     </div>
   </header>
@@ -245,6 +270,24 @@
       <button id="order-history-close" class="benefits-close-btn" aria-label="close">✕</button>
     </div>
     <div id="order-history-rows"></div>
+  </section>
+
+  <!-- Stored Value transaction history — opened via
+       #member-menu-transactions (member-menu popover) and by tapping
+       #header-balance-widget directly, both logged-in only. Same
+       .sheet-backdrop/.checkout-sheet shell and .benefits-header/
+       .benefits-close-btn header as #order-history-sheet above.
+       Read-only: top-ups and deductions only (no order itemization —
+       see get-stored-value-transactions, which caps at the 50 most
+       recent), newest first. -->
+  <div id="transactions-backdrop" class="sheet-backdrop" hidden></div>
+  <section id="transactions-sheet" class="checkout-sheet" hidden aria-label="Stored value transaction history">
+    <div class="sheet-handle"></div>
+    <div class="benefits-header">
+      <h2>儲值紀錄</h2>
+      <button id="transactions-close" class="benefits-close-btn" aria-label="close">✕</button>
+    </div>
+    <div id="transactions-rows"></div>
   </section>
 
   <!-- Checkout sign-in-or-guest choice — shown by submitOrder() (app.js)

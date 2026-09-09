@@ -1094,9 +1094,10 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
 // Reveals the header's signed-in indicator (see .member-badge in
 // style.css / index.html) — called once syncLoggedInProfile() below
 // has a real profile. Tapping it opens #member-menu (see
-// toggleMemberMenu() below) — today just 登出, but built as the anchor
-// point future member features (order history, points, stored value)
-// will attach to as more menu entries, not a finished member UI.
+// toggleMemberMenu() below) — 訂單紀錄/儲值紀錄/登出 today (order
+// history, stamp progress via #header-stamp-widget, and Stored Value's
+// own header readout all live outside this menu now — see those
+// widgets' own comments).
 function showMemberBadge(profile) {
   const avatar = document.getElementById("member-avatar");
   if (profile.pictureUrl) {
@@ -1109,6 +1110,7 @@ function showMemberBadge(profile) {
   document.getElementById("member-badge").hidden = false;
   document.getElementById("member-pill").hidden = true;
   document.getElementById("header-stamp-widget").hidden = false;
+  document.getElementById("header-balance-widget").hidden = false;
 }
 
 // The header's other face for the same slot .member-badge occupies —
@@ -1120,15 +1122,18 @@ function showMemberPill() {
   document.getElementById("member-pill").hidden = false;
   document.getElementById("member-badge").hidden = true;
   document.getElementById("header-stamp-widget").hidden = true;
+  document.getElementById("header-balance-widget").hidden = true;
 }
 
 // ------------------------------------------------------------
 // Member menu — small popover anchored to #member-badge (see
-// .member-menu in style.css). Deliberately a bare list shell: today's
-// only entry is 登出, but future entries (order history, stored value
-// balance, stamp card progress, favourites) are meant to be appended
-// as more .member-menu-item buttons in index.html + more click
-// handlers here, not a redesign of this shell.
+// .member-menu in style.css). A bare list shell, deliberately kept at
+// 3 items (訂單紀錄/儲值紀錄/登出) — stamp progress and the Stored
+// Value balance itself both live in the header instead (see
+// #header-stamp-widget/#header-balance-widget), reached directly
+// without opening this menu at all; 儲值紀錄 here opens the
+// transaction-history detail behind the header balance readout, not a
+// duplicate of it.
 // ------------------------------------------------------------
 
 function openMemberMenu() {
@@ -1168,10 +1173,12 @@ function handleLogout() {
   currentFavorites = new Set();
   frequentlyBoughtItemIds = null;
   stampProgress = null;
+  currentHeaderBalance = null;
   showMemberPill();
   refreshFavoriteUI();
   renderMemberPicksRow();
   refreshStampWidgetUI();
+  refreshBalanceWidgetUI();
 }
 
 // Current session's LINE identity. isTest is decided by isTesterMode()
@@ -1208,6 +1215,7 @@ async function syncLoggedInProfile(profile) {
   showMemberBadge(profile);
   await loadMemberPicks();
   await loadStampProgress();
+  await loadStoredValueBalance();
 }
 
 // ------------------------------------------------------------
@@ -1434,10 +1442,9 @@ function refreshStampWidgetUI() {
   });
 
   // #benefits-login only makes sense for a not-yet-logged-in visitor —
-  // reusing #benefits-card for a logged-in member's real stamp
-  // progress (see #member-menu-stamp-card in wireUpUI()) would
-  // otherwise show a redundant "connect with LINE" button to someone
-  // already connected.
+  // reusing #benefits-card for a logged-in member (opened by tapping
+  // #header-stamp-widget, see wireUpUI()) would otherwise show a
+  // redundant "connect with LINE" button to someone already connected.
   document.getElementById("benefits-login").hidden = Boolean(currentMember.userId);
 }
 
@@ -1452,8 +1459,12 @@ function refreshStampWidgetUI() {
 
 // "9月7日 上午1:53" style — Asia/Taipei explicitly, matching the
 // Weekday Stamp Card's own timezone handling, not the visitor's device
-// timezone (see isTaipeiFriday() above for the same reasoning).
-function formatOrderHistoryDateTime(isoString) {
+// timezone (see isTaipeiFriday() above for the same reasoning). Shared
+// by order history and the Stored Value transaction history below —
+// both are "when did this member-scoped thing happen" timestamps
+// wanting the identical format, not two features that happen to look
+// alike.
+function formatMemberDateTime(isoString) {
   return new Date(isoString).toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
     month: "numeric",
@@ -1477,7 +1488,7 @@ function buildOrderHistoryItem(order) {
   const header = document.createElement("div");
   header.className = "order-history-item-header";
   header.innerHTML = `
-    <span class="order-history-date">${formatOrderHistoryDateTime(order.created_at)}</span>
+    <span class="order-history-date">${formatMemberDateTime(order.created_at)}</span>
     <span class="order-history-total">NT$${order.total}</span>
   `;
   item.appendChild(header);
@@ -1527,6 +1538,148 @@ async function openOrderHistorySheet() {
 function closeOrderHistorySheet() {
   document.getElementById("order-history-backdrop").hidden = true;
   document.getElementById("order-history-sheet").hidden = true;
+}
+
+// ------------------------------------------------------------
+// Stored Value — header balance readout + transaction history.
+//
+// The balance itself was never actually shown anywhere in this app
+// before this section: the "future entries" comment on #member-menu
+// (index.html) listed it as something still to come, and the only
+// real number a member ever saw was buried inside the checkout
+// sheet's payment-method radio label ("使用儲值支付（餘額：NT$X）"),
+// which is itself hidden whenever the balance doesn't cover the
+// current total — never a general-purpose "what's my balance" view.
+// This section is that view: an always-visible header readout (shown
+// even at NT$0, unlike checkout's conditional one) plus a dedicated
+// transaction history sheet, both reusing the same
+// verified-LIFF-ID-token Edge Function pattern as checkout's own
+// get-stored-value-balance call.
+// ------------------------------------------------------------
+
+// Current member's balance as last fetched, for the header readout —
+// { balance:number } once loaded, null for a guest, before the first
+// fetch, or if the fetch failed (shown as "NT$—", not a stale/guessed
+// number — see refreshBalanceWidgetUI()). Deliberately a separate
+// variable from checkout's own currentStoredValueBalance above: that
+// one is scoped to "what was true when the checkout sheet last
+// opened" and reset every openSheet() call; this one is scoped to
+// "what's shown in the header right now" and only changes at login or
+// after an order actually spends stored value (see submitOrder()).
+let currentHeaderBalance = null;
+
+// Called once right after login resolves (syncLoggedInProfile()),
+// mirroring loadStampProgress()/loadMemberPicks() — not re-fetched on
+// every render, since nothing changes it within a session except an
+// order that actually pays with stored value, which updates
+// currentHeaderBalance directly instead of re-fetching (see
+// submitOrder()).
+async function loadStoredValueBalance() {
+  let idToken;
+  try {
+    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
+  } catch (err) {
+    idToken = null;
+  }
+  if (!idToken) {
+    currentHeaderBalance = null;
+  } else {
+    const result = await callEdgeFunction("get-stored-value-balance", { id_token: idToken });
+    currentHeaderBalance = result.ok ? result.balance : null;
+  }
+  refreshBalanceWidgetUI();
+}
+
+// Updates the header readout to match currentHeaderBalance — same
+// division of labour as refreshStampWidgetUI(): loadStoredValueBalance()
+// decides *what* the number is, this only ever renders it. A failed/
+// not-yet-loaded fetch shows "NT$—" rather than "NT$0", so a real zero
+// balance (a real, known fact) can never be confused with "couldn't
+// reach the server" (an unknown one).
+function refreshBalanceWidgetUI() {
+  document.getElementById("header-balance-amount").textContent =
+    currentHeaderBalance != null ? `NT$${currentHeaderBalance}` : "NT$—";
+}
+
+// 儲值 (credit) vs 折抵/消費 (debit) — 'refund' included even though
+// nothing currently inserts that type (see stored_value_transactions'
+// type check constraint in README.md) so a future refund flow doesn't
+// silently fall back to showing a raw "refund" string.
+const TRANSACTION_TYPE_LABELS = {
+  topup: "儲值",
+  deduction: "折抵/消費",
+  refund: "退款",
+};
+
+// One transaction row — type + signed amount (amount is already
+// signed in the database, e.g. -45 for a deduction, see
+// spend_stored_value()/topup_stored_value() in README.md, so this
+// never re-derives the sign from `type` itself) + timestamp. No order
+// itemization here by design (see get-stored-value-transactions) —
+// order history's own sheet already covers what was bought.
+function buildTransactionItem(tx) {
+  const item = document.createElement("div");
+  item.className = "transaction-item";
+
+  const left = document.createElement("div");
+  const typeEl = document.createElement("div");
+  typeEl.className = "transaction-type";
+  typeEl.textContent = TRANSACTION_TYPE_LABELS[tx.type] || tx.type;
+  const dateEl = document.createElement("div");
+  dateEl.className = "transaction-date";
+  dateEl.textContent = formatMemberDateTime(tx.created_at);
+  left.appendChild(typeEl);
+  left.appendChild(dateEl);
+
+  const amountEl = document.createElement("div");
+  const isPositive = tx.amount >= 0;
+  amountEl.className = `transaction-amount ${isPositive ? "positive" : "negative"}`;
+  // Sign goes before "NT$", not folded into the number itself (e.g.
+  // "-NT$45", not "NT$-45") — matches the stamp discount preview's own
+  // "-NT$${discount}" formatting elsewhere in this file.
+  amountEl.textContent = `${isPositive ? "+" : "-"}NT$${Math.abs(tx.amount)}`;
+
+  item.appendChild(left);
+  item.appendChild(amountEl);
+  return item;
+}
+
+async function openTransactionsSheet() {
+  document.getElementById("transactions-backdrop").hidden = false;
+  document.getElementById("transactions-sheet").hidden = false;
+
+  const rows = document.getElementById("transactions-rows");
+  rows.innerHTML = `<p class="order-history-empty">載入中…</p>`;
+
+  let idToken;
+  try {
+    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
+  } catch (err) {
+    idToken = null;
+  }
+
+  const result = idToken
+    ? await callEdgeFunction("get-stored-value-transactions", { id_token: idToken })
+    : { ok: false, code: "unknown", error: "No ID token available" };
+
+  if (!result.ok) {
+    console.error("[StoredValue] get-stored-value-transactions failed", result);
+    rows.innerHTML = `<p class="order-history-empty">載入失敗，請稍後再試</p>`;
+    return;
+  }
+
+  if (result.transactions.length === 0) {
+    rows.innerHTML = `<p class="order-history-empty">尚無儲值紀錄</p>`;
+    return;
+  }
+
+  rows.innerHTML = "";
+  result.transactions.forEach((tx) => rows.appendChild(buildTransactionItem(tx)));
+}
+
+function closeTransactionsSheet() {
+  document.getElementById("transactions-backdrop").hidden = true;
+  document.getElementById("transactions-sheet").hidden = true;
 }
 
 // Silent membership check — called once from init() at page load.
@@ -1833,7 +1986,15 @@ async function submitOrder() {
           })
         : { ok: false, code: "unknown", error: "No ID token available" };
 
-      if (spendResult.ok) balanceSnapshot = spendResult.balance;
+      if (spendResult.ok) {
+        balanceSnapshot = spendResult.balance;
+        // Header readout already reflects this order's spend, before
+        // the LINE chat message/confirmation screen below even render
+        // — no extra get-stored-value-balance round trip needed since
+        // the spend itself already returned the new balance.
+        currentHeaderBalance = spendResult.balance;
+        refreshBalanceWidgetUI();
+      }
 
       if (!spendResult.ok) {
         // Most likely insufficient_funds from a race with another
@@ -1958,17 +2119,20 @@ function wireUpUI() {
   document.getElementById("member-badge").addEventListener("click", toggleMemberMenu);
   document.getElementById("member-menu-backdrop").addEventListener("click", closeMemberMenu);
   document.getElementById("member-menu-logout").addEventListener("click", handleLogout);
-  document.getElementById("member-menu-stamp-card").addEventListener("click", () => {
-    closeMemberMenu();
-    openBenefitsCard(); // already showing real, current stampProgress — see refreshStampWidgetUI()
-  });
-  document.getElementById("header-stamp-widget").addEventListener("click", openBenefitsCard); // same 集點進度 view the member-menu entry opens — not purely inert
+  document.getElementById("header-stamp-widget").addEventListener("click", openBenefitsCard); // the shared 會員福利 explainer (集點/儲值/我的最愛 captions) — not purely inert
   document.getElementById("member-menu-order-history").addEventListener("click", () => {
     closeMemberMenu();
     openOrderHistorySheet();
   });
   document.getElementById("order-history-close").addEventListener("click", closeOrderHistorySheet);
   document.getElementById("order-history-backdrop").addEventListener("click", closeOrderHistorySheet);
+  document.getElementById("header-balance-widget").addEventListener("click", openTransactionsSheet); // same 儲值紀錄 view the member-menu entry opens — not purely inert
+  document.getElementById("member-menu-transactions").addEventListener("click", () => {
+    closeMemberMenu();
+    openTransactionsSheet();
+  });
+  document.getElementById("transactions-close").addEventListener("click", closeTransactionsSheet);
+  document.getElementById("transactions-backdrop").addEventListener("click", closeTransactionsSheet);
 }
 
 async function init() {
