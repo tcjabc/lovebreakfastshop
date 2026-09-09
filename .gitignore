@@ -2,3 +2,5 @@
 send-to-escpresso.js
 
 .claude/
+.wrangler/
+.dev.vars
