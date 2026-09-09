@@ -22,7 +22,7 @@ build step, npm dependencies, or a framework unless explicitly asked**.
 
 To run locally: `npx serve .` from the repo root (no install step
 needed beyond that). Opening `index.html` directly via `file://` does
-NOT work for `staff.html` — WebUSB requires a secure context
+NOT work for `staff/index.html` — WebUSB requires a secure context
 (`localhost` or real HTTPS).
 
 ## Files
@@ -31,7 +31,7 @@ NOT work for `staff.html` — WebUSB requires a secure context
 |-|-|
 |`index.html` / `app.js` / `style.css`|Customer-facing ordering app (opens in LIFF)|
 |`menu.js`|Menu data + shop info — edited directly, no admin UI|
-|`staff.html` / `staff.js` / `staff-style.css`|Staff tablet dashboard: order queue (Pending/Preparing/Ready), print button|
+|`staff/index.html` / `staff/staff.js` / `staff/staff-style.css`|Staff tablet dashboard: order queue (Pending/Preparing/Ready), print button — moved from repo-root `staff.html`/`staff.js`/`staff-style.css` into `staff/` alongside the PIN gate (see "Staff dashboard PIN gate" below)|
 |`print.js`|ESC/POS receipt building (separate kitchen ticket + customer label documents) + WebUSB printer connection (Chrome-on-Android only)|
 |`supabase-config.js`|Supabase client + order insert/favourites/order-history helpers, shared by customer and staff apps|
 |`supabase/functions/`|Deno Edge Functions for Stored Value and the Weekday Stamp Card — the only code in this repo that runs server-side. Verifies identity (LINE ID token or staff PIN) before touching money; see "Server-side identity verification" below|
@@ -246,7 +246,7 @@ changed — it is NOT a login gate anymore, and hasn't been since this
 redesign.** Login is available to everyone, always, by their own
 choice. `isTesterMode(userId)` now only decides whether a *logged-in*
 user's orders get `is_test = true`, so the shop owner's own testing
-orders land in `staff.html`'s Test Orders section instead of the live
+orders land in `staff/index.html`'s Test Orders section instead of the live
 kitchen queue/auto-print. Called from `syncLoggedInProfile()` on every
 login. `feature_flags` (table, RLS policy, existing seeded row) was
 never dropped through any of this — only what the flag controls
@@ -377,7 +377,7 @@ in `app.js`) each name one of these and each is actually built:
   Friday only, once per member per week. See README's "Weekday Stamp
   Card" section and "Server-side identity verification" above.
 * **Stored Value (儲值)** — prepaid cash balance, cash top-up only via
-  a staff-PIN-gated panel in `staff.html`. See README's "Stored Value"
+  a staff-PIN-gated panel in `staff/index.html`. See README's "Stored Value"
   section.
 * **Favourites** — member-only star toggle on any item card, plus a
   "我的最愛"/"常買推薦" row. Permissive RLS like `orders`/`members`
