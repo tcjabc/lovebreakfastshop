@@ -556,6 +556,24 @@ function formatPickupTime(isoString) {
   return `${month}/${day} (${weekday}) ${hour}:${minute}`;
 }
 
+// Same "+8h offset, read UTC fields as Taipei-local fields" trick as
+// formatPickupTime() above, but for "right now" (at print time)
+// instead of an order's own ISO timestamp — used only to find today's
+// slot in the Weekday Stamp Card row. Returns 0=Sun..6=Sat, matching
+// the convention supabase/functions/_shared/stampProgress.ts uses.
+function taipeiNowWeekday() {
+  const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000;
+  return new Date(Date.now() + TAIPEI_OFFSET_MS).getUTCDay();
+}
+
+// Mirrors supabase/functions/_shared/stampProgress.ts's
+// STAMP_QUALIFYING_SPEND — duplicated, not imported, same reasoning as
+// verifyStaffPin.ts's duplication noted in CLAUDE.md: print.js runs in
+// the browser, that file runs in a Deno Edge Function, no shared
+// import path between the two runtimes. Keep these two values in sync
+// by hand if the threshold ever changes.
+const STAMP_QUALIFYING_SPEND = 85;
+
 // ============================================================
 // KITCHEN TICKET — printed for whoever is making the food. Just the
 // order number (large, so it's readable from across the counter) and
@@ -613,63 +631,26 @@ function buildCustomerLabelModel(order) {
   const divider = "-".repeat(CHARS_PER_LINE);
   const lines = [];
 
-  // Member name prints first — large + centered — ahead of even the
-  // shop name, so it's the first thing visible when the customer looks
-  // at the receipt for pickup. (Placement judgment call: "first" could
-  // instead have meant first within the member-info block below the
-  // shop header — flag if this isn't what you meant and it's a
-  // one-line move.) Guest orders have no order.memberName, so the shop
-  // name is simply the first line printed, same as before.
-  if (order.memberName) {
-    lines.push({ text: order.memberName, align: "center", bold: true, size: "large" });
-  }
-
+  // Shop name is the masthead — unconditionally first, ahead of the
+  // restructured order/total/item block below. Not one of the
+  // numbered items in that structure; it's the letterhead, not order
+  // content.
   lines.push({ text: order.shopName, align: "center", bold: true, size: "normal" });
-  lines.push({ text: `訂單編號：${order.shortId}`, align: "left", bold: false, size: "normal" });
 
+  // 1. Order short_id (+ pickup time, grouped with it as "which order
+  // is this" rather than as its own numbered step).
+  lines.push({ text: `訂單編號：${order.shortId}`, align: "left", bold: false, size: "normal" });
   if (order.pickupSlot) {
     lines.push({ text: `取餐時間：${formatPickupTime(order.pickupSlot)}`, align: "left", bold: false, size: "normal" });
   }
 
-  // stampSnapshot/balanceSnapshot are this member's progress/balance as
-  // of THIS order, not re-derived from their current real state, so an
-  // old receipt stays an accurate record even after later orders change
-  // both. ●/○ rather than an emoji/cup glyph for the Fri slot — not
-  // every printer codepage has one, and the bracket around it is enough
-  // to set it apart from the plain Mon-Thu run without needing a
-  // different glyph at all.
-  if (order.memberName) {
-    const days = (order.stampSnapshot && order.stampSnapshot.days) || [false, false, false, false];
-    const unlocked = Boolean(order.stampSnapshot && order.stampSnapshot.unlocked);
-    const dayCircles = days.map((filled) => (filled ? "●" : "○")).join("");
-    const friCircle = unlocked ? "●" : "○";
-    lines.push({ text: `${dayCircles} (${friCircle})`, align: "left", bold: false, size: "normal" });
-
-    if (order.balanceSnapshot != null) {
-      lines.push({ text: `儲值餘額 NT$${order.balanceSnapshot}`, align: "left", bold: false, size: "normal" });
-    }
-  }
-
-  lines.push({ text: divider, align: "left", bold: false, size: "normal" });
-
-  order.items.forEach((item) => {
-    const label = item.modifiers ? `${item.name}(${item.modifiers})` : item.name;
-    lines.push({
-      text: padColumns(`${label} x${item.qty}`, `$${item.subtotal}`, CHARS_PER_LINE),
-      align: "left",
-      bold: false,
-      size: "normal",
-    });
-  });
-
   // order.stampDiscount comes from orders.stamp_discount (see
   // receiptDataFor() in staff.js) — only present/non-zero on a Weekday
-  // Stamp Card redemption, so this line is conditional (unlike the
-  // payment-status line below, which is unconditional but has
-  // conditional wording) — same "built once, only rendered when
-  // relevant" shape either way. Item lines above still show each
-  // item's full, undiscounted price; without this line the printed
-  // total wouldn't visibly reconcile against them.
+  // Stamp Card redemption. Kept immediately above the total it
+  // explains, same adjacency as before this restructure — item lines
+  // further down still show each item's full, undiscounted price,
+  // without this line the printed total wouldn't visibly reconcile
+  // against them.
   if (order.stampDiscount) {
     lines.push({
       text: padColumns("集點折抵", `-NT$${order.stampDiscount}`, CHARS_PER_LINE),
@@ -679,26 +660,113 @@ function buildCustomerLabelModel(order) {
     });
   }
 
-  lines.push({ text: divider, align: "left", bold: false, size: "normal" });
+  // 2. Total + payment-method line — unconditional, always prints.
   lines.push({
     text: padColumns("總計", `NT$${order.total}`, CHARS_PER_LINE),
     align: "left",
     bold: true,
     size: "normal",
   });
-
-  // order.paymentMethod comes from orders.payment_method (see
-  // receiptDataFor() in staff.js) — 'cash_on_pickup' or 'stored_value'.
-  // Always printed, never omitted, regardless of which one it is; only
-  // the wording is conditional. Bold + large so it reads as a
-  // confirmation, not a detail. Chinese-only, like every other line on
-  // this receipt — at "large" size the usable column budget is halved
-  // to 24, worth remembering if either wording ever needs to grow.
+  // order.paymentMethod comes from orders.payment_method — 'cash_on_pickup'
+  // or 'stored_value'. Always printed; only the wording is conditional.
+  // Bold + large so it reads as a confirmation, not a detail.
   lines.push({
     text: order.paymentMethod === "stored_value" ? "已用儲值支付" : "現場付款",
     align: "left",
     bold: true,
     size: "large",
+  });
+
+  // 3. Remaining stored-value balance — members with a stored value
+  // account only, omitted entirely (no placeholder) for guests.
+  // balanceSnapshot is already the POST-transaction balance (the real
+  // post-deduction figure if stored value paid for this order, else
+  // whatever balance was current when checkout opened) — see the
+  // "balanceSnapshot" comment in app.js's submitOrder(); nothing to
+  // subtract again here. Guarded on order.memberName too (not just
+  // balanceSnapshot != null) since guests never have either.
+  if (order.memberName && order.balanceSnapshot != null) {
+    lines.push({ text: `儲值餘額 NT$${order.balanceSnapshot}`, align: "left", bold: false, size: "normal" });
+  }
+
+  // 4. Item count.
+  const totalQty = order.items.reduce((sum, item) => sum + item.qty, 0);
+  lines.push({ text: `品項數：${totalQty}`, align: "left", bold: false, size: "normal" });
+
+  // 5. Customer/member name — large + centered, same styling it had
+  // before this restructure, just moved lower in the document. Guest
+  // orders have no order.memberName, so this line is simply absent.
+  if (order.memberName) {
+    lines.push({ text: order.memberName, align: "center", bold: true, size: "large" });
+  }
+
+  // 6-8. Weekday Stamp Card row, sandwiched between two dividers —
+  // members only. Guests collapse straight to a single divider ahead
+  // of the items section (same one divider guest receipts have always
+  // had ahead of items — not zero, not two either side of a gap).
+  if (order.memberName) {
+    lines.push({ text: divider, align: "left", bold: false, size: "normal" });
+
+    // stampSnapshot.days/unlocked are captured once at checkout (see
+    // app.js's submitOrder()) so an old receipt stays an accurate
+    // record even after later orders change the member's real
+    // progress — see the comment on insertOrder()'s stampSnapshot
+    // param in supabase-config.js. That capture happens BEFORE this
+    // order is written to `orders`, so today's slot in it can't yet
+    // reflect this order's own spend. Fix up just today's slot here:
+    // if it's not already true and this order's own total alone meets
+    // the threshold, today's cumulative-including-this-order is
+    // provably >= threshold regardless of what came before it today,
+    // so it's safe to mark filled. This can't produce a false
+    // "filled" — only a same-day member who already crossed the
+    // threshold via SEVERAL smaller orders today (none of which
+    // individually hit $85) would still show unfilled here, since
+    // print.js has no per-day running total to add to, only the
+    // login-time boolean snapshot plus this one order's total.
+    const days = ((order.stampSnapshot && order.stampSnapshot.days) || [false, false, false, false]).slice();
+    const weekday = taipeiNowWeekday(); // 0=Sun..6=Sat, Taipei, "now" at print time
+    const todayIndex = weekday - 1; // Mon(1)->0 .. Thu(4)->3; Fri/Sat/Sun fall outside 0-3 and are left alone
+    if (todayIndex >= 0 && todayIndex <= 3 && !days[todayIndex] && order.total >= STAMP_QUALIFYING_SPEND) {
+      days[todayIndex] = true;
+    }
+
+    // Fri slot: filled if THIS order redeemed the free drink
+    // (order.stampDiscount truthy). stampSnapshot only carries
+    // days/unlocked (eligibility), not a "redeemed" flag (see
+    // app.js's submitOrder() — stampSnapshot is built from
+    // {days, unlocked} only), so a receipt reprinted/viewed for a
+    // *different* order placed later the same week, after redemption
+    // already happened on an earlier order, has no reliable signal
+    // here and will show this slot unfilled. Flagging, not guessing:
+    // getting that case right would need `redeemed` added to the
+    // snapshot captured at checkout.
+    const dayCircles = days.map((filled) => (filled ? "●" : "○")).join("");
+    const friCircle = order.stampDiscount ? "●" : "○";
+    lines.push({ text: `${dayCircles}${friCircle}`, align: "left", bold: false, size: "normal" });
+
+    lines.push({ text: divider, align: "left", bold: false, size: "normal" });
+  } else {
+    lines.push({ text: divider, align: "left", bold: false, size: "normal" });
+  }
+
+  // 9. Items — no numbering (this receipt never had any), name
+  // un-underlined (this receipt never applied underline either; ESC/POS
+  // underline is a distinct command this codebase doesn't use). What
+  // does change: modifiers no longer print inline as "name(modifiers)"
+  // — they get their own indented line under the item, same 2-space
+  // indent convention buildKitchenTicketModel() already uses for the
+  // same purpose (not a tab — ESC/POS tab stops aren't guaranteed
+  // configured on this printer).
+  order.items.forEach((item) => {
+    lines.push({
+      text: padColumns(`${item.name} x${item.qty}`, `$${item.subtotal}`, CHARS_PER_LINE),
+      align: "left",
+      bold: false,
+      size: "normal",
+    });
+    if (item.modifiers) {
+      lines.push({ text: `  ${item.modifiers}`, align: "left", bold: false, size: "normal" });
+    }
   });
 
   if (order.note) {
