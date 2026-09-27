@@ -1,3 +1,5 @@
+// DEPRECATED — kept only so cached old index.html/app.js keep working; delete after 2026-10-11. Source of truth is menu.json.
+//
 // ============================================================
 // MENU DATA
 // Edit this file to change what's for sale. No coding needed

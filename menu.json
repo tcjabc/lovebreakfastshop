@@ -1,0 +1,297 @@
+{
+  "version": "2026-09-27.1",
+  "_notes": [
+    "Single source of truth for the menu, prices, and pricing/pickup rules. Fetched at runtime by index.html/app.js and staff/index.html/staff.js (and, later, by the server-side place-order Edge Function) — replaces the old menu.js.",
+    "ANY change to a price, option, add-on, item id, option/add-on id, or rule MUST bump \"version\".",
+    "Option and add-on \"id\"s are stable keys stored in customers' carts (and later sent to the server) — never rename or reuse one for a different meaning; add a new id instead. Display order is array order; a \"single\" group's FIRST option is its default.",
+    "Item fields: id, name, nameEn (unused by design — all display text is Chinese-only, leave \"\"), then EITHER price OR priceThin/priceThick. priceThin/priceThick is used instead of price for items with a bread-thickness choice whose price delta isn't flat across items; priceThick: null means that item doesn't offer a thick option at all (no thickness picker is shown). modifierGroups references entries in the top-level modifierGroups by id; addons are one-off checkboxes on that item (shared category add-ons — 蛋餅類's 起司, 甜甜Der's 棉花糖 — are expanded onto every item in the category).",
+    "SOURCE: transcribed from a phone photo of the physical board — see DOCS/menu-extracted.md for the full transcription notes, section-by-section add-on rules, and what's still uncertain. Re-check anything marked TODO below once the real PDF arrives.",
+    "TODO: multi-column price areas were the hardest to read from the phone photo — menu-extracted.md flags 法式類 and 甜甜Der specifically as the most likely spots for a misread digit. Re-check every priceThin/priceThick pair in those two categories against the PDF once it arrives.",
+    "PRICE_UNVERIFIED (TODO: verify against PDF — multi-column price, hardest to read from the phone photo): ft-01, ft-02, ft-03, ft-04, ft-05, ft-06, ft-07, sd-01, sd-02, sd-03, sd-04, sd-05, sd-06, sd-07, sd-08, sd-09",
+    "modifierGroups.submarineSauce: not one of the originally-built sample groups — added because 潛艇堡 (submarine sandwich) needs a sauce choice and none of the existing groups fit.",
+    "rules.pickup: open/close are Asia/Taipei local times, close exclusive (the last slot starts at close - slotMinutes). app.js applies a fixed +08:00 offset (Taiwan has no DST), so timezone must stay Asia/Taipei. perSlot is the max orders per slot passed to reserve_pickup_slot(). minLeadMinutes: earliest selectable slot is now + this, rounded up to the next slot boundary.",
+    "rules.stamp: the Weekday Stamp Card's Friday free drink applies to the most expensive line whose item is in drinkCategory, discounted by min(that line's unit price, freeDrinkCap)."
+  ],
+  "shopInfo": {"name": "樂福", "nameEn": "", "pickupNote": "新鮮豬肉．手打嫩肉排"},
+  "rules": {
+    "stamp": {"drinkCategory": "飲品", "freeDrinkCap": 35},
+    "pickup": {"open": "06:00", "close": "09:00", "slotMinutes": 15, "perSlot": 6, "minLeadMinutes": 30, "timezone": "Asia/Taipei"}
+  },
+  "modifierGroups": {
+    "cheeseLettuce": {
+      "label": "加點",
+      "type": "multi",
+      "options": [
+        {"id": "cheese", "label": "加起司", "price": 10},
+        {"id": "lettuce", "label": "加生菜", "price": 10}
+      ]
+    },
+    "cheeseEgg": {
+      "label": "加點",
+      "type": "multi",
+      "options": [
+        {"id": "cheese", "label": "加起司", "price": 10},
+        {"id": "egg", "label": "加蛋", "price": 10}
+      ]
+    },
+    "eggPancakeBase": {
+      "label": "餅皮選擇",
+      "type": "single",
+      "options": [
+        {"id": "plain", "label": "原味", "price": 0},
+        {"id": "puff_pastry", "label": "酥皮", "price": 5},
+        {"id": "scallion_flatbread", "label": "抓餅", "price": 10}
+      ]
+    },
+    "hotCold": {
+      "label": "冰熱選擇",
+      "type": "single",
+      "options": [
+        {"id": "hot", "label": "熱", "price": 0},
+        {"id": "iced", "label": "冰", "price": 0}
+      ]
+    },
+    "noodleSpice": {
+      "label": "辣度選擇",
+      "type": "single",
+      "options": [
+        {"id": "sweet_spicy", "label": "甜辣", "price": 0},
+        {"id": "extra_spicy", "label": "特辣", "price": 0},
+        {"id": "kids", "label": "小朋友", "price": 0}
+      ]
+    },
+    "eggDoneness": {
+      "label": "熟度選擇",
+      "type": "single",
+      "options": [
+        {"id": "soft", "label": "半熟", "price": 0},
+        {"id": "well_done", "label": "全熟", "price": 0}
+      ]
+    },
+    "submarineSauce": {
+      "label": "醬料選擇",
+      "type": "single",
+      "options": [
+        {"id": "salsa", "label": "莎莎醬", "price": 0},
+        {"id": "honey_mustard", "label": "蜂蜜芥末", "price": 0}
+      ]
+    }
+  },
+  "menu": [
+    {
+      "category": "吐司類",
+      "items": [
+        {"id": "ts-01", "name": "肉排總匯", "nameEn": "", "price": 80, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-02", "name": "招牌肉排蛋", "nameEn": "", "price": 55, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-03", "name": "生菜肉排蛋", "nameEn": "", "price": 65, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-04", "name": "起司肉排蛋", "nameEn": "", "price": 65, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-05", "name": "花生醬肉排蛋", "nameEn": "", "price": 65, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-06", "name": "洋蔥肉排蛋", "nameEn": "", "price": 65, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-07", "name": "義式漢堡肉蛋", "nameEn": "", "price": 65, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-08", "name": "泰式雞肉", "nameEn": "", "price": 55, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-09", "name": "生菜咔啦雞", "nameEn": "", "price": 55, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-10", "name": "生菜雞柳", "nameEn": "", "price": 50, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-11", "name": "鮪魚蛋", "nameEn": "", "price": 45, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-12", "name": "燻雞蛋", "nameEn": "", "price": 40, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-13", "name": "培根蛋", "nameEn": "", "price": 40, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-14", "name": "肉鬆蛋", "nameEn": "", "price": 40, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-15", "name": "火腿蛋", "nameEn": "", "price": 40, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-16", "name": "起司蛋 (素)", "nameEn": "", "price": 35, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-17", "name": "玉米洋蔥蛋 (素)", "nameEn": "", "price": 35, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-18", "name": "蔬菜蛋 (素)", "nameEn": "", "price": 35, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-19", "name": "薯餅蛋", "nameEn": "", "price": 45, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-20", "name": "玉米蛋 (素)", "nameEn": "", "price": 35, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-21", "name": "洋芋肉排", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "ts-22", "name": "洋芋鮪魚", "nameEn": "", "price": 60, "modifierGroups": ["cheeseLettuce"]}
+      ]
+    },
+    {
+      "category": "蛋餅類",
+      "items": [
+        {"id": "eg-01", "name": "招牌肉排", "nameEn": "", "price": 55, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-02", "name": "起司肉排", "nameEn": "", "price": 65, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-03", "name": "生菜肉排", "nameEn": "", "price": 65, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-04", "name": "花生醬肉排", "nameEn": "", "price": 65, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-05", "name": "洋蔥肉排", "nameEn": "", "price": 65, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-06", "name": "義式漢堡肉", "nameEn": "", "price": 55, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-07", "name": "泰式雞柳", "nameEn": "", "price": 50, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-08", "name": "黃金泡菜鮪魚 (熱門)", "nameEn": "", "price": 50, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-09", "name": "燻雞", "nameEn": "", "price": 45, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-10", "name": "培根", "nameEn": "", "price": 40, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-11", "name": "肉鬆火腿", "nameEn": "", "price": 40, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-12", "name": "起司 (素)", "nameEn": "", "price": 40, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-13", "name": "玉米洋芋菜 (素)", "nameEn": "", "price": 35, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-14", "name": "薯餅玉米", "nameEn": "", "price": 45, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-15", "name": "洋芋肉排", "nameEn": "", "price": 70, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-16", "name": "洋芋鮪魚", "nameEn": "", "price": 60, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-17", "name": "花生醬培根", "nameEn": "", "price": 55, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]},
+        {"id": "eg-18", "name": "原味 (素)", "nameEn": "", "price": 25, "modifierGroups": ["eggPancakeBase"], "addons": [{"id": "cheese", "label": "起司", "price": 10}]}
+      ]
+    },
+    {
+      "category": "墨西哥捲餅",
+      "items": [
+        {"id": "wr-01", "name": "莎莎醬肉排", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "wr-02", "name": "莎莎醬義式漢堡肉", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "wr-03", "name": "洋蔥肉排", "nameEn": "", "price": 65, "modifierGroups": ["cheeseEgg"]},
+        {"id": "wr-04", "name": "泰式雞肉", "nameEn": "", "price": 65, "modifierGroups": ["cheeseEgg"]},
+        {"id": "wr-05", "name": "生菜雞柳", "nameEn": "", "price": 60, "modifierGroups": ["cheeseEgg"]},
+        {"id": "wr-06", "name": "德式香腸", "nameEn": "", "price": 60, "modifierGroups": ["cheeseEgg"]}
+      ]
+    },
+    {
+      "category": "可頌類",
+      "items": [
+        {"id": "cr-01", "name": "生菜肉排", "nameEn": "", "price": 75, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-02", "name": "洋蔥肉排", "nameEn": "", "price": 75, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-03", "name": "義式漢堡肉", "nameEn": "", "price": 75, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-04", "name": "生菜雞柳", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-05", "name": "生菜鮪魚", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-06", "name": "生菜燻雞", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-07", "name": "花生醬培根", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-08", "name": "榛果可可醬", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-09", "name": "顆粒花生", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-10", "name": "巧克力 (熱門)", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-11", "name": "草莓", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-12", "name": "藍莓", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-13", "name": "奶酥", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "cr-14", "name": "藍莓乾酪", "nameEn": "", "price": 60, "modifierGroups": ["cheeseEgg"]}
+      ]
+    },
+    {
+      "category": "漢堡類",
+      "items": [
+        {"id": "bg-01", "name": "招牌肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-02", "name": "生菜肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-03", "name": "起司肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-04", "name": "花生醬肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-05", "name": "洋蔥肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-06", "name": "義式漢堡肉蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-07", "name": "鮪魚蛋", "nameEn": "", "price": 50, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-08", "name": "培根蛋", "nameEn": "", "price": 45, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "bg-09", "name": "肉鬆蛋", "nameEn": "", "price": 45, "modifierGroups": ["cheeseLettuce"]}
+      ]
+    },
+    {
+      "category": "滿福堡",
+      "items": [
+        {"id": "mf-01", "name": "招牌肉排蛋", "nameEn": "", "price": 60, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-02", "name": "生菜肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-03", "name": "起司肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-04", "name": "花生醬肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-05", "name": "洋蔥肉排蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-06", "name": "義式漢堡肉蛋", "nameEn": "", "price": 70, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-07", "name": "生菜雞柳", "nameEn": "", "price": 55, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-08", "name": "鮪魚蛋", "nameEn": "", "price": 45, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-09", "name": "培根蛋", "nameEn": "", "price": 40, "modifierGroups": ["cheeseLettuce"]},
+        {"id": "mf-10", "name": "蔬菜蛋 (素)", "nameEn": "", "price": 40, "modifierGroups": ["cheeseLettuce"]}
+      ]
+    },
+    {
+      "category": "法式類",
+      "items": [
+        {"id": "ft-01", "name": "招牌肉排", "nameEn": "", "priceThin": 60, "priceThick": null},
+        {"id": "ft-02", "name": "花生醬肉排", "nameEn": "", "priceThin": 70, "priceThick": null},
+        {"id": "ft-03", "name": "榛果可可醬", "nameEn": "", "priceThin": 35, "priceThick": 40},
+        {"id": "ft-04", "name": "顆粒花生", "nameEn": "", "priceThin": 30, "priceThick": 35},
+        {"id": "ft-05", "name": "巧克力", "nameEn": "", "priceThin": 30, "priceThick": 35},
+        {"id": "ft-06", "name": "草莓", "nameEn": "", "priceThin": 30, "priceThick": 35},
+        {"id": "ft-07", "name": "煉乳", "nameEn": "", "priceThin": 30, "priceThick": 35}
+      ]
+    },
+    {
+      "category": "貝果類",
+      "items": [
+        {"id": "bgl-01", "name": "生菜肉排", "nameEn": "", "price": 75, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-02", "name": "花生醬肉排", "nameEn": "", "price": 75, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-03", "name": "義式漢堡肉", "nameEn": "", "price": 75, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-04", "name": "生菜鮪魚", "nameEn": "", "price": 65, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-05", "name": "乾酪 (素)", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-06", "name": "藍莓乾酪", "nameEn": "", "price": 60, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-07", "name": "榛果可可醬", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-08", "name": "顆粒花生", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-09", "name": "巧克力", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-10", "name": "草莓", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-11", "name": "藍莓", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]},
+        {"id": "bgl-12", "name": "奶酥", "nameEn": "", "price": 50, "modifierGroups": ["cheeseEgg"]}
+      ]
+    },
+    {
+      "category": "甜甜Der",
+      "items": [
+        {"id": "sd-01", "name": "榛果可可醬", "nameEn": "", "priceThin": 25, "priceThick": 30, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-02", "name": "顆粒花生", "nameEn": "", "priceThin": 25, "priceThick": 30, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-03", "name": "巧克力", "nameEn": "", "priceThin": 20, "priceThick": 25, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-04", "name": "草莓", "nameEn": "", "priceThin": 20, "priceThick": 25, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-05", "name": "藍莓", "nameEn": "", "priceThin": 20, "priceThick": 25, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-06", "name": "奶酥", "nameEn": "", "priceThin": 20, "priceThick": 25, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-07", "name": "煉乳", "nameEn": "", "priceThin": 20, "priceThick": 25, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-08", "name": "藍莓乾酪", "nameEn": "", "priceThin": 35, "priceThick": null, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]},
+        {"id": "sd-09", "name": "黃金蛋", "nameEn": "", "priceThin": 30, "priceThick": null, "addons": [{"id": "marshmallow", "label": "棉花糖", "price": 10}]}
+      ]
+    },
+    {
+      "category": "軟法類",
+      "items": [
+        {"id": "sb-01", "name": "生菜肉排", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "sb-02", "name": "義式漢堡肉", "nameEn": "", "price": 70, "modifierGroups": ["cheeseEgg"]},
+        {"id": "sb-03", "name": "生菜鮪魚", "nameEn": "", "price": 65, "modifierGroups": ["cheeseEgg"]},
+        {"id": "sb-04", "name": "生菜培根", "nameEn": "", "price": 60, "modifierGroups": ["cheeseEgg"]},
+        {"id": "sb-05", "name": "生菜雞柳", "nameEn": "", "price": 60, "modifierGroups": ["cheeseEgg"]}
+      ]
+    },
+    {
+      "category": "沙拉類",
+      "items": [
+        {"id": "sl-01", "name": "輕食生菜肉排沙拉", "nameEn": "", "price": 60},
+        {"id": "sl-02", "name": "泰式雞肉沙拉", "nameEn": "", "price": 55}
+      ]
+    },
+    {
+      "category": "潛艇堡",
+      "items": [
+        {"id": "sm-01", "name": "招牌肉排", "nameEn": "", "price": 65, "modifierGroups": ["submarineSauce"]},
+        {"id": "sm-02", "name": "德式香腸", "nameEn": "", "price": 60, "modifierGroups": ["submarineSauce"]}
+      ]
+    },
+    {
+      "category": "鐵板麵",
+      "items": [
+        {"id": "np-01", "name": "特調鐵板麵", "nameEn": "", "price": 55, "modifierGroups": ["noodleSpice"], "addons": [{"id": "fried_egg", "label": "荷包蛋", "price": 10}, {"id": "pork_patty", "label": "手作肉排", "price": 20}, {"id": "kimchi", "label": "黃金泡菜", "price": 20}, {"id": "extra_noodles", "label": "加麵", "price": 10}]}
+      ]
+    },
+    {
+      "category": "點心 / 炸物類",
+      "items": [
+        {"id": "sn-01", "name": "熱狗 (3條)", "nameEn": "", "price": 20},
+        {"id": "sn-02", "name": "脆薯", "nameEn": "", "price": 30},
+        {"id": "sn-03", "name": "小雞塊", "nameEn": "", "price": 30},
+        {"id": "sn-04", "name": "檸檬雞柳", "nameEn": "", "price": 30},
+        {"id": "sn-05", "name": "德式香腸", "nameEn": "", "price": 30},
+        {"id": "sn-06", "name": "薯餅 (熱門)", "nameEn": "", "price": 25},
+        {"id": "sn-07", "name": "芋泥球", "nameEn": "", "price": 35},
+        {"id": "sn-08", "name": "肉來一片", "nameEn": "", "price": 30},
+        {"id": "sn-09", "name": "蘿蔔糕", "nameEn": "", "price": 35},
+        {"id": "sn-10", "name": "蘿蔔糕 + 蛋", "nameEn": "", "price": 45},
+        {"id": "sn-11", "name": "蘿蔔糕 + 肉", "nameEn": "", "price": 65},
+        {"id": "sn-12", "name": "蘿蔔糕 + 黃金泡菜", "nameEn": "", "price": 55},
+        {"id": "sn-13", "name": "煎餃", "nameEn": "", "price": 35},
+        {"id": "sn-14", "name": "荷包蛋", "nameEn": "", "price": 15, "modifierGroups": ["eggDoneness"]},
+        {"id": "sn-15", "name": "可樂餅", "nameEn": "", "price": 35}
+      ]
+    },
+    {
+      "category": "飲品",
+      "items": [
+        {"id": "dr-01", "name": "美式咖啡（120oz）", "nameEn": "", "price": 45, "modifierGroups": ["hotCold"]},
+        {"id": "dr-02", "name": "拿鐵（120oz）", "nameEn": "", "price": 60, "modifierGroups": ["hotCold"]},
+        {"id": "dr-03", "name": "可可牛奶（120oz）", "nameEn": "", "price": 40, "modifierGroups": ["hotCold"]},
+        {"id": "dr-04", "name": "Tree Top 蘋果汁（120oz）", "nameEn": "", "price": 30, "modifierGroups": ["hotCold"]},
+        {"id": "dr-05", "name": "鮮奶茶（140oz）", "nameEn": "", "price": 35, "modifierGroups": ["hotCold"]},
+        {"id": "dr-06", "name": "非基改豆漿（140oz）", "nameEn": "", "price": 25, "modifierGroups": ["hotCold"]},
+        {"id": "dr-07", "name": "紅茶（140oz）", "nameEn": "", "price": 20, "modifierGroups": ["hotCold"]},
+        {"id": "dr-08", "name": "豆漿紅茶（140oz）", "nameEn": "", "price": 25, "modifierGroups": ["hotCold"]}
+      ]
+    }
+  ]
+}

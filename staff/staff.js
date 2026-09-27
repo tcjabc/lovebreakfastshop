@@ -4,6 +4,30 @@
 
 const POLL_INTERVAL_MS = 5000; // check for new/updated orders every 5s
 
+// Shop info from /menu.json (the dashboard only needs shopInfo — orders
+// carry their own item names/prices). null until loadShopInfo()
+// resolves, or if it failed; the order queue works either way.
+let SHOP_INFO = null;
+// Receipt header when shopInfo didn't load — a literal, not read from
+// menu.json, precisely because it's only used when that fetch failed.
+// Every character is in print.js's GB18030_TABLE.
+const RECEIPT_FALLBACK_SHOP_NAME = "樂福早餐店";
+
+async function loadShopInfo() {
+  const nameEl = document.getElementById("staff-shop-name");
+  try {
+    const res = await fetch("/menu.json", { cache: "no-cache" });
+    if (!res.ok) throw new Error(`menu.json HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data || !data.shopInfo) throw new Error("menu.json has no shopInfo");
+    SHOP_INFO = data.shopInfo;
+    nameEl.textContent = SHOP_INFO.name;
+  } catch (err) {
+    console.error("[Menu] failed to load menu.json", err);
+    nameEl.textContent = "菜單載入失敗，請重新整理";
+  }
+}
+
 // Auto-print bookkeeping — both in-memory only (session-scoped, not
 // persisted). Whether an order has actually been printed lives in
 // Supabase (orders.printed) precisely so *that* survives a reload;
@@ -128,7 +152,7 @@ async function updateStatus(orderId, newStatus) {
 // — shared so the preview can never drift from what actually prints.
 function receiptDataFor(order) {
   return {
-    shopName: SHOP_INFO ? SHOP_INFO.name : "Order",
+    shopName: SHOP_INFO ? SHOP_INFO.name : RECEIPT_FALLBACK_SHOP_NAME,
     shortId: order.short_id,
     items: order.items,
     total: order.total,
@@ -286,8 +310,6 @@ async function refresh() {
 
   autoPrintPendingOrders(liveOrders); // test orders are never auto-printed
 }
-
-document.getElementById("staff-shop-name").textContent = SHOP_INFO ? SHOP_INFO.name : "Orders";
 
 document.getElementById("receipt-preview-close").addEventListener("click", closePreview);
 document.getElementById("receipt-preview-backdrop").addEventListener("click", closePreview);
@@ -622,5 +644,10 @@ document.getElementById("sv-search-input").addEventListener("input", (e) => {
   svSearchDebounce = setTimeout(() => searchMembers(query), 300);
 });
 
-refresh();
-setInterval(refresh, POLL_INTERVAL_MS);
+// Shop info first, so the first auto-print sweep already has the shop
+// name for the receipt header. loadShopInfo() never rejects — on
+// failure the header shows the error and polling still starts.
+loadShopInfo().then(() => {
+  refresh();
+  setInterval(refresh, POLL_INTERVAL_MS);
+});

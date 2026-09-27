@@ -30,7 +30,7 @@ NOT work for `staff/index.html` — WebUSB requires a secure context
 |File|Purpose|
 |-|-|
 |`index.html` / `app.js` / `style.css`|Customer-facing ordering app (opens in LIFF)|
-|`menu.js`|Menu data + shop info — edited directly, no admin UI|
+|`menu.json`|Single source of truth for menu data, prices, option/add-on ids, shop info, and the stamp-card/pickup-window rules — edited directly, no admin UI; fetched at runtime by `app.js` and `staff.js` (replaced `menu.js`). Any price/option change must bump its `version`; see its `_notes`|
 |`staff/index.html` / `staff/staff.js` / `staff/staff-style.css`|Staff tablet dashboard: order queue (Pending/Preparing/Ready), print button — moved from repo-root `staff.html`/`staff.js`/`staff-style.css` into `staff/` alongside the PIN gate (see "Staff dashboard PIN gate" below)|
 |`print.js`|ESC/POS receipt building (separate kitchen ticket + customer label documents) + WebUSB printer connection (Chrome-on-Android only)|
 |`supabase-config.js`|Supabase client + order insert/favourites/order-history helpers, shared by customer and staff apps|
@@ -81,7 +81,7 @@ config), `DOCS`, and `worker.js`/`wrangler.jsonc` (the Worker is
 bundled from `main` separately, so excluding `worker.js` from assets
 doesn't affect the Worker build). As of 2026-09-27 the only published
 files are `index.html`, `app.js`, `supabase-config.js`, `print.js`,
-`style.css`, `menu.js`, `assets/*`, and `staff/index.html`/
+`style.css`, `menu.json`, `assets/*`, and `staff/index.html`/
 `staff.js`/`staff-style.css`. Don't widen
 `assets.directory` away from a `.assetsignore`-covered root, and don't
 delete or narrow `.assetsignore`'s entries, without re-checking that
@@ -314,7 +314,7 @@ real hardware" caveat that no longer applies:
   quick glance at a test print). Fix: `print.js`'s `textToBytes()` now
   runs every character through a hand-built `GB18030_TABLE` — every
   CJK/fullwidth character actually used anywhere in the project
-  (menu.js, app.js, staff.js, print.js, the HTML files), mapped to its
+  (menu.json — formerly menu.js — app.js, staff.js, print.js, the HTML files), mapped to its
   real GB18030 bytes and confirmed against the real printer — before
   falling back to raw UTF-8 for anything outside that table (e.g. an
   unusual character typed into a customer note). `ab661d0` filled in

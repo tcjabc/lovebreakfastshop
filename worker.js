@@ -10,7 +10,7 @@
 // wrangler.jsonc scopes `assets.run_worker_first` to ["/staff/*"], so
 // this script's fetch handler only ever runs for requests under
 // /staff — every other request (the customer ordering app: index.html,
-// app.js, menu.js, etc.) is served directly from the `assets` binding
+// app.js, menu.json, etc.) is served directly from the `assets` binding
 // with no Worker invocation at all, same as before this gate existed.
 //
 // PIN gate for the staff dashboard (/staff/*): see gateStaffRequest()

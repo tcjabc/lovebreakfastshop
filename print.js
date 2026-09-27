@@ -40,7 +40,7 @@ const CHARS_PER_LINE = 48;
 const FEED_LINES_BEFORE_CUT = 5;
 
 // Maps every CJK/fullwidth character currently used anywhere in this
-// project (menu.js, app.js, staff.js, print.js, index.html, staff/index.html)
+// project (menu.json, app.js, staff.js, print.js, index.html, staff/index.html)
 // to its GB18030 byte encoding. Confirmed empirically on the real
 // printer (Xprinter XP-Q200) — it was decoding raw UTF-8 bytes through
 // its own built-in GB18030-ish table by default, which is why Chinese
@@ -634,8 +634,11 @@ function buildCustomerLabelModel(order) {
   // Shop name is the masthead — unconditionally first, ahead of the
   // restructured order/total/item block below. Not one of the
   // numbered items in that structure; it's the letterhead, not order
-  // content.
-  lines.push({ text: order.shopName, align: "center", bold: true, size: "normal" });
+  // content. Falls back to the literal shop name if the caller had no
+  // shopInfo (menu.json failed to load) — see staff.js's
+  // RECEIPT_FALLBACK_SHOP_NAME; repeated here so print.js never prints
+  // a blank masthead whatever the caller passes.
+  lines.push({ text: order.shopName || "樂福早餐店", align: "center", bold: true, size: "normal" });
 
   // 1. Order short_id (+ pickup time, grouped with it as "which order
   // is this" rather than as its own numbered step).

@@ -17,12 +17,14 @@ custom domain.
 
 ## Step 1 — Edit the menu
 
-Open `menu.js` and edit the `MENU` array: category names, item names,
+Open `menu.json` and edit the `menu` array: category names, item names,
 and prices. All user-facing text in this app is Chinese-only (see
 CLAUDE.md) — leave `nameEn` blank (`""`) as the other items do; it's
 still there as a field, just unused by design now. No other file
-needs to change for a menu update. Also update `SHOP_INFO.name` to
-the real shop name.
+needs to change for a menu update, but **every price/option change must
+bump `version`**, and option/add-on `id`s must never be renamed or
+reused (they're stored in customers' carts) — see the file's own
+`_notes`. Also update `shopInfo.name` to the real shop name.
 
 ## Step 2 — Host the files
 

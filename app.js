@@ -12,7 +12,49 @@ const LIFF_ID = "2011450491-x1jvqSz3";
 // item with no options keeps line id === item id, exactly like
 // before. See lineId() below.
 // { [lineId]: { itemId, qty, selection } }
+// selection is null for an item with no options, otherwise
+// { thickness: "thin"|"thick"|null,
+//   groups: { [groupId]: optionId | [optionIds] },
+//   addons: [addonIds] }
+// — option/add-on IDS from menu.json, never array indexes, so reordering
+// options in menu.json can't silently change what a cart line means.
 const cart = {};
+
+// ------------------------------------------------------------
+// Menu data — fetched from /menu.json (the single source of truth for
+// items, prices, options and pricing/pickup rules; see its own _notes)
+// by loadMenu() in init(), before anything renders. Nothing below may
+// touch these until loadMenu() has resolved.
+// ------------------------------------------------------------
+let MENU = [];
+let modifierGroups = {};
+let SHOP_INFO = null;
+let MENU_RULES = null;
+let MENU_VERSION = null;
+
+async function loadMenu() {
+  const res = await fetch("/menu.json", { cache: "no-cache" });
+  if (!res.ok) throw new Error(`menu.json HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data || !Array.isArray(data.menu) || !data.modifierGroups || !data.shopInfo || !data.rules) {
+    throw new Error("menu.json is missing required fields");
+  }
+  MENU = data.menu;
+  modifierGroups = data.modifierGroups;
+  SHOP_INFO = data.shopInfo;
+  MENU_RULES = data.rules;
+  MENU_VERSION = data.version;
+  applyPickupRules(data.rules.pickup);
+}
+
+function showMenuLoadError() {
+  document.getElementById("shop-name").textContent = "";
+  document.getElementById("search-input").closest(".search-bar").hidden = true;
+  const empty = document.getElementById("empty-state");
+  empty.querySelector("p").textContent = "菜單載入失敗";
+  empty.querySelector(".empty-sub").textContent = "請檢查網路連線後重新整理頁面";
+  empty.hidden = false;
+}
 
 // Holds the item + in-progress selection while the options sheet is
 // open. Not part of `cart` until "Add to cart" is pressed.
@@ -32,12 +74,16 @@ let currentOptionsQty = 1;
 // all, since that path never redirects and so never calls the persist
 // half of this in the first place.
 const LOGIN_REDIRECT_CART_KEY = "loginRedirectCart";
+// Bump whenever the stored cart's shape changes. A stored cart with any
+// other (or no) version is discarded on restore, never migrated —
+// version 2 is the switch from option/add-on array indexes to ids.
+const CART_FORMAT_VERSION = 2;
 
 function persistCartForLoginRedirect() {
   try {
     sessionStorage.setItem(
       LOGIN_REDIRECT_CART_KEY,
-      JSON.stringify({ cart, note: document.getElementById("order-note").value })
+      JSON.stringify({ v: CART_FORMAT_VERSION, cart, note: document.getElementById("order-note").value })
     );
   } catch (err) {
     console.error("[Login] failed to persist cart before redirect", err);
@@ -64,7 +110,21 @@ function restoreCartAfterLoginRedirect() {
 
   try {
     const saved = JSON.parse(raw);
-    Object.assign(cart, saved.cart);
+    if (!saved || saved.v !== CART_FORMAT_VERSION) {
+      console.warn("[Login] discarding persisted cart with old/missing format version", saved && saved.v);
+      return;
+    }
+    // Keep only lines that still make sense against the menu.json just
+    // loaded (it may have changed between leaving for LINE's login page
+    // and coming back) — anything else would price as NaN or throw.
+    Object.entries(saved.cart || {}).forEach(([id, line]) => {
+      const item = line && findItem(line.itemId);
+      if (item && Number.isInteger(line.qty) && line.qty > 0 && isValidSelection(item, line.selection)) {
+        cart[id] = line;
+      } else {
+        console.warn("[Login] dropping persisted cart line no longer valid for this menu", id);
+      }
+    });
     if (saved.note) document.getElementById("order-note").value = saved.note;
   } catch (err) {
     console.error("[Login] failed to restore persisted cart", err);
@@ -102,6 +162,36 @@ function lineBasePrice(item, selection) {
   return item.price;
 }
 
+// Option/add-on lookups by id. Throw on an unknown id rather than
+// silently pricing it as 0 — every selection built by the options sheet
+// or restored from sessionStorage (isValidSelection()) only ever holds
+// ids that exist in the loaded menu.json.
+function groupOption(group, optionId) {
+  const option = group.options.find((o) => o.id === optionId);
+  if (!option) throw new Error(`unknown option id "${optionId}"`);
+  return option;
+}
+
+// A single group's picked option — its first option (the default) when
+// nothing was picked, same as the options sheet preselects.
+function singlePick(group, picked) {
+  return groupOption(group, picked != null ? picked : group.options[0].id);
+}
+
+// A multi group's picked options, duplicates dropped (first occurrence
+// wins, so the order ticked is kept — describeSelection() lists them in
+// that order, same as before ids replaced indexes).
+function multiPicks(group, picked) {
+  return [...new Set(picked || [])].map((id) => groupOption(group, id));
+}
+
+// The item's add-ons that are selected, in menu.json order (not tick
+// order), each counted once however many times its id appears.
+function selectedAddons(item, selection) {
+  const ids = new Set(selection.addons || []);
+  return (item.addons || []).filter((addon) => ids.has(addon.id));
+}
+
 function lineUnitPrice(item, selection) {
   let total = lineBasePrice(item, selection);
   if (!selection) return total;
@@ -110,18 +200,41 @@ function lineUnitPrice(item, selection) {
     const group = modifierGroups[groupId];
     const picked = selection.groups[groupId];
     if (group.type === "multi") {
-      (picked || []).forEach((i) => (total += group.options[i].price));
+      multiPicks(group, picked).forEach((option) => (total += option.price));
     } else {
-      const i = picked != null ? picked : 0;
-      total += group.options[i].price;
+      total += singlePick(group, picked).price;
     }
   });
 
-  (item.addons || []).forEach((addon, i) => {
-    if ((selection.addons || []).includes(i)) total += addon.price;
-  });
+  selectedAddons(item, selection).forEach((addon) => (total += addon.price));
 
   return total;
+}
+
+// Whether a selection (e.g. one restored from sessionStorage) only
+// refers to thickness/options/add-ons this item actually offers in the
+// current menu.json.
+function isValidSelection(item, selection) {
+  if (selection == null) return !itemHasOptions(item);
+  if (typeof selection !== "object") return false;
+
+  const hasThickness = item.priceThick != null;
+  if (hasThickness ? !["thin", "thick"].includes(selection.thickness) : selection.thickness != null) return false;
+
+  const itemGroups = item.modifierGroups || [];
+  const groups = selection.groups || {};
+  if (Object.keys(groups).some((groupId) => !itemGroups.includes(groupId))) return false;
+  const groupsOk = itemGroups.every((groupId) => {
+    const group = modifierGroups[groupId];
+    const picked = groups[groupId];
+    const known = (id) => group.options.some((o) => o.id === id);
+    if (group.type === "multi") return picked == null || (Array.isArray(picked) && picked.every(known));
+    return picked == null || known(picked);
+  });
+  if (!groupsOk) return false;
+
+  const addonIds = (item.addons || []).map((a) => a.id);
+  return Array.isArray(selection.addons || []) && (selection.addons || []).every((id) => addonIds.includes(id));
 }
 
 // Human-readable summary of a selection, e.g. "厚片、+起司、+荷包蛋" —
@@ -139,25 +252,24 @@ function describeSelection(item, selection) {
     const group = modifierGroups[groupId];
     const picked = selection.groups[groupId];
     if (group.type === "multi") {
-      (picked || []).forEach((i) => parts.push(`+${group.options[i].label}`));
+      multiPicks(group, picked).forEach((option) => parts.push(`+${option.label}`));
     } else {
-      const i = picked != null ? picked : 0;
+      const option = singlePick(group, picked);
       // Only call out the choice when it's not the plain first option —
       // e.g. "抓餅" is worth showing, "原味" isn't.
-      if (i !== 0) parts.push(group.options[i].label);
+      if (option !== group.options[0]) parts.push(option.label);
     }
   });
 
-  (item.addons || []).forEach((addon, i) => {
-    if ((selection.addons || []).includes(i)) parts.push(`+${addon.label}`);
-  });
+  selectedAddons(item, selection).forEach((addon) => parts.push(`+${addon.label}`));
 
   return parts.join("、");
 }
 
 // Deterministic id for a (item, selection) pair so re-adding the same
 // exact customization merges into the same cart line instead of
-// creating a duplicate.
+// creating a duplicate. Multi-group and add-on ids are de-duplicated
+// and sorted, so tick order doesn't create separate lines.
 function lineId(itemId, selection) {
   if (!selection) return itemId;
   const groups = {};
@@ -165,9 +277,9 @@ function lineId(itemId, selection) {
     .sort()
     .forEach((groupId) => {
       const v = selection.groups[groupId];
-      groups[groupId] = Array.isArray(v) ? [...v].sort((a, b) => a - b) : v;
+      groups[groupId] = Array.isArray(v) ? [...new Set(v)].sort() : v;
     });
-  const addons = [...(selection.addons || [])].sort((a, b) => a - b);
+  const addons = [...new Set(selection.addons || [])].sort();
   return `${itemId}::${JSON.stringify({ t: selection.thickness || null, g: groups, a: addons })}`;
 }
 
@@ -518,21 +630,21 @@ function renderOptionsContent() {
         title: group.label,
         name: `opt-group-${groupId}`,
         type: group.type,
-        options: group.options.map((o, i) => ({
+        options: group.options.map((o) => ({
           label: o.price ? `${o.label} (+NT$${o.price})` : o.label,
-          value: i,
+          value: o.id,
         })),
-        isSelected: (i) => {
+        isSelected: (id) => {
           const picked = currentSelection.groups[groupId];
-          return group.type === "multi" ? picked.includes(i) : picked === i;
+          return group.type === "multi" ? picked.includes(id) : picked === id;
         },
-        onSelect: (i) => {
+        onSelect: (id) => {
           if (group.type === "multi") {
             const set = new Set(currentSelection.groups[groupId]);
-            set.has(i) ? set.delete(i) : set.add(i);
+            set.has(id) ? set.delete(id) : set.add(id);
             currentSelection.groups[groupId] = [...set];
           } else {
-            currentSelection.groups[groupId] = i;
+            currentSelection.groups[groupId] = id;
           }
         },
       })
@@ -545,11 +657,11 @@ function renderOptionsContent() {
         title: "加點",
         name: "opt-addons",
         type: "multi",
-        options: item.addons.map((a, i) => ({ label: `${a.label} (+NT$${a.price})`, value: i })),
-        isSelected: (i) => currentSelection.addons.includes(i),
-        onSelect: (i) => {
+        options: item.addons.map((a) => ({ label: `${a.label} (+NT$${a.price})`, value: a.id })),
+        isSelected: (id) => currentSelection.addons.includes(id),
+        onSelect: (id) => {
           const set = new Set(currentSelection.addons);
-          set.has(i) ? set.delete(i) : set.add(i);
+          set.has(id) ? set.delete(id) : set.add(id);
           currentSelection.addons = [...set];
         },
       })
@@ -580,7 +692,7 @@ function openOptionsSheet(item) {
   };
   (item.modifierGroups || []).forEach((groupId) => {
     const group = modifierGroups[groupId];
-    currentSelection.groups[groupId] = group.type === "multi" ? [] : 0;
+    currentSelection.groups[groupId] = group.type === "multi" ? [] : group.options[0].id;
   });
 
   document.getElementById("options-title").textContent = item.name;
@@ -620,11 +732,29 @@ function confirmAddOptions() {
 // script and that Deno runtime.
 // ------------------------------------------------------------
 
-const SLOT_LENGTH_MINUTES = 15;
-const MAX_ORDERS_PER_SLOT = 6;
-const PICKUP_WINDOW_START_HOUR = 6; // 6:00 Asia/Taipei
-const PICKUP_WINDOW_END_HOUR = 9; // 9:00 Asia/Taipei — exclusive, so the last slot starts 8:45
+// Set from menu.json's rules.pickup by applyPickupRules() (called from
+// loadMenu()) — 15 / 6 / 06:00 / 09:00 / 30 as of this writing.
+let SLOT_LENGTH_MINUTES = null;
+let MAX_ORDERS_PER_SLOT = null; // also passed as p_max to reserve_pickup_slot()
+let PICKUP_WINDOW_START_MINUTES = null; // minutes after Taipei midnight, e.g. 06:00 → 360
+let PICKUP_WINDOW_END_MINUTES = null; // exclusive, so at 09:00 the last slot starts 8:45
+let PICKUP_MIN_LEAD_MINUTES = null;
+// Fixed +8h, not derived from rules.pickup.timezone — Asia/Taipei has
+// no DST, and menu.json's _notes say that field must stay Asia/Taipei.
 const PICKUP_TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function parseClockMinutes(hhmm) {
+  const [h, m] = String(hhmm).split(":").map(Number);
+  return h * 60 + m;
+}
+
+function applyPickupRules(pickup) {
+  SLOT_LENGTH_MINUTES = pickup.slotMinutes;
+  MAX_ORDERS_PER_SLOT = pickup.perSlot;
+  PICKUP_WINDOW_START_MINUTES = parseClockMinutes(pickup.open);
+  PICKUP_WINDOW_END_MINUTES = parseClockMinutes(pickup.close);
+  PICKUP_MIN_LEAD_MINUTES = pickup.minLeadMinutes;
+}
 const PICKUP_TAIPEI_WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"]; // Date.getUTCDay() index, Taipei-shifted
 
 // Current Taipei-local calendar date, as UTC-numbered fields (month is
@@ -654,17 +784,15 @@ function addTaipeiDays({ year, month, day }, days) {
 // day — 12 of them at the current constants (6:00 to 8:45).
 function buildSlotsForDay(taipeiDay) {
   const slots = [];
-  for (let hour = PICKUP_WINDOW_START_HOUR; hour < PICKUP_WINDOW_END_HOUR; hour++) {
-    for (let minute = 0; minute < 60; minute += SLOT_LENGTH_MINUTES) {
-      slots.push(taipeiDateTime(taipeiDay.year, taipeiDay.month, taipeiDay.day, hour, minute));
-    }
+  for (let m = PICKUP_WINDOW_START_MINUTES; m < PICKUP_WINDOW_END_MINUTES; m += SLOT_LENGTH_MINUTES) {
+    slots.push(taipeiDateTime(taipeiDay.year, taipeiDay.month, taipeiDay.day, Math.floor(m / 60), m % 60));
   }
   return slots;
 }
 
 // The slot list to actually offer right now: today's remaining slots
-// (earliest selectable = now + 30min, rounded UP to the next 15-minute
-// boundary) if any remain before the window's last slot, otherwise
+// (earliest selectable = now + rules.pickup.minLeadMinutes, rounded UP
+// to the next slot boundary) if any remain before the window's last slot, otherwise
 // tomorrow's full list — never an empty picker. Whether "today" even
 // has any remaining slots (window not yet reached, mid-window, or
 // already closed for the day) all fall out of the same >= filter below
@@ -673,7 +801,7 @@ function getAvailablePickupSlots() {
   const today = taipeiNowParts();
   const todaySlots = buildSlotsForDay(today);
 
-  const earliestMs = Date.now() + 30 * 60 * 1000;
+  const earliestMs = Date.now() + PICKUP_MIN_LEAD_MINUTES * 60 * 1000;
   const shifted = new Date(earliestMs + PICKUP_TAIPEI_OFFSET_MS);
   const roundedMinutes = Math.ceil(shifted.getUTCMinutes() / SLOT_LENGTH_MINUTES) * SLOT_LENGTH_MINUTES;
   const earliestSlot = new Date(
@@ -1327,7 +1455,7 @@ async function renderMemberPicksRow() {
 
 // ------------------------------------------------------------
 // Weekday Stamp Card — spend NT$85+ each of Mon-Thu, redeem one free
-// drink (capped at NT$35) on Friday. All of the actual unlock/redeemed
+// drink (capped at rules.stamp.freeDrinkCap, NT$35) on Friday. All of the actual unlock/redeemed
 // logic lives server-side (get-stamp-progress / redeem-stamp-drink) —
 // this section only ever displays what those returned and re-derives
 // the client-side "is it Friday, is there a drink in the cart to
@@ -1361,14 +1489,15 @@ function findItemCategory(itemId) {
   return null;
 }
 
-// The 飲品 line the free-drink redemption would apply to, if any —
+// The drink line (menu.json rules.stamp.drinkCategory, i.e. 飲品) the
+// free-drink redemption would apply to, if any —
 // picks the most expensive one when more than one is in the cart
 // (maximizes the discount; nothing in the spec says to prefer
 // otherwise). null if the cart has no drink at all.
 function findDrinkForStampRedemption() {
   let best = null;
   Object.values(cart).forEach((line) => {
-    if (findItemCategory(line.itemId) !== "飲品") return;
+    if (findItemCategory(line.itemId) !== MENU_RULES.stamp.drinkCategory) return;
     const item = findItem(line.itemId);
     if (!item) return;
     const unitPrice = lineUnitPrice(item, line.selection);
@@ -1398,7 +1527,7 @@ function computeStampDiscount() {
   if (!stampRedemptionEligible()) return null;
   const drink = findDrinkForStampRedemption();
   if (!drink) return null;
-  return { itemId: drink.itemId, discount: Math.min(drink.unitPrice, 35) };
+  return { itemId: drink.itemId, discount: Math.min(drink.unitPrice, MENU_RULES.stamp.freeDrinkCap) };
 }
 
 // Called once right after login resolves (syncLoggedInProfile()),
@@ -2136,7 +2265,19 @@ function wireUpUI() {
 }
 
 async function init() {
-  restoreCartAfterLoginRedirect(); // before the first render, so restored quantities show immediately, not after a flash of empty
+  try {
+    await loadMenu();
+  } catch (err) {
+    // Nothing on this page works without the menu (prices, options,
+    // pickup slots) — show the error and stop here. A persisted
+    // login-redirect cart is left in sessionStorage untouched, so a
+    // reload that does load the menu can still restore it.
+    console.error("[Menu] failed to load menu.json", err);
+    showMenuLoadError();
+    return;
+  }
+
+  restoreCartAfterLoginRedirect(); // after loadMenu() (validates lines against it), before the first render, so restored quantities show immediately, not after a flash of empty
   wireUpUI();
   renderMenu();
   updateCartBar(); // renderMenu() doesn't touch the cart bar itself — reflect a restored cart's count/total right away
