@@ -37,7 +37,7 @@ NOT work for `staff/index.html` — WebUSB requires a secure context
 |`supabase/functions/`|Deno Edge Functions for Stored Value and the Weekday Stamp Card — the only code in this repo that runs server-side. Verifies identity (LINE ID token or staff PIN) before touching money; see "Server-side identity verification" below|
 |`worker.js`|Cloudflare Worker entrypoint — PIN-gates `/staff/*` only; every other request is served as a plain static asset without this file running at all. See "Deployment: Cloudflare Workers (not Pages)" below|
 |`wrangler.jsonc`|Worker config: `main` (`worker.js`), the `assets` binding, and `assets.run_worker_first` scoping the gate to `/staff/*`|
-|`.assetsignore`|Excludes `.git`, `.gitignore`, `CLAUDE.md`, `README.md`, `.dev.vars`, `node_modules`, `supabase`, `.wrangler`, `.claude`, `DOCS`, `worker.js`, and `wrangler.jsonc` from the public static-asset upload — see "Deployment" below before touching this or `assets.directory`|
+|`.assetsignore`|Excludes `.git`, `.gitignore`, `CLAUDE.md`, `README.md`, `.dev.vars`, `node_modules`, `supabase`, `.wrangler`, `.claude`, `DOCS`, `worker.js`, `wrangler.jsonc`, and `assets/logo-original.jpg` (the icon source image) from the public static-asset upload — see "Deployment" below before touching this or `assets.directory`|
 |`README.md`|Full setup walkthrough (LINE Developer Console, LIFF, Supabase, Cloudflare Workers, printer pairing)|
 
 ## Deployment: Cloudflare Workers (not Pages)

@@ -4,12 +4,18 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>樂福</title>
-<!-- Favicon only — no manifest: the staff dashboard isn't a separate
-     installable customer app. -->
-<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png" />
+<!-- Installable as its own app (樂福店務), separate from the customer
+     app. The manifest lives at the site ROOT (/staff.webmanifest), not
+     under /staff/: the Worker PIN-gates everything under /staff/, and
+     Chrome fetches manifests without cookies, so a manifest in here
+     would come back as the PIN page. Icons are the public /assets ones. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png?v=20260928" />
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png?v=20260928" />
+<link rel="manifest" href="/staff.webmanifest" />
+<meta name="theme-color" content="#fbefe6" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="staff-style.css?v=20260928" />
+<link rel="stylesheet" href="staff-style.css?v=20260928-2" />
 </head>
 <body>
 
@@ -22,7 +28,7 @@
        (under its own storage key, see STAFF_AUTH_STORAGE_KEY). -->
   <section id="staff-login" class="staff-login" hidden>
     <div class="staff-login-card">
-      <img class="logo-placeholder" src="../assets/logo.png" width="42" height="42" alt="樂福" />
+      <img class="logo-placeholder" src="../assets/logo.png?v=20260928" width="42" height="42" alt="樂福" />
       <h1 class="staff-login-title">店務帳號登入</h1>
       <p class="staff-login-hint">每台裝置只需登入一次</p>
       <p id="staff-login-message" class="staff-login-message" hidden></p>
@@ -52,7 +58,7 @@
 
   <header class="staff-header">
     <div class="staff-header-left">
-      <img class="logo-placeholder" src="../assets/logo.png" width="42" height="42" alt="樂福" />
+      <img class="logo-placeholder" src="../assets/logo.png?v=20260928" width="42" height="42" alt="樂福" />
       <div class="shop-header-text">
         <h1 id="staff-shop-name">載入中…</h1>
         <p class="staff-subtitle">訂單</p>
@@ -175,6 +181,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
   <script src="../supabase-config.js?v=20260927-2"></script>
   <script src="../print.js?v=20260927"></script>
-  <script src="staff.js?v=20260928"></script>
+  <script src="staff.js?v=20260928-2"></script>
 </body>
 </html>
