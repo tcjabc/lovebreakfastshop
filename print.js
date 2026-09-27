@@ -709,18 +709,20 @@ function buildKitchenTicket(order) {
 // footer. Chinese-only throughout, matching the menu data itself —
 // see CLAUDE.md's site-wide Chinese-only text policy.
 // ============================================================
-function buildCustomerLabelModel(order) {
+function buildCustomerLabelModel(order, { withLogo = false } = {}) {
   const divider = "-".repeat(CHARS_PER_LINE);
   const lines = [];
 
-  // Shop name is the masthead — unconditionally first, ahead of the
-  // restructured order/total/item block below. Not one of the
-  // numbered items in that structure; it's the letterhead, not order
-  // content. Falls back to the literal shop name if the caller had no
-  // shopInfo (menu.json failed to load) — see staff.js's
-  // RECEIPT_FALLBACK_SHOP_NAME; repeated here so print.js never prints
-  // a blank masthead whatever the caller passes.
-  lines.push({ text: order.shopName || "樂福早餐店", align: "center", bold: true, size: "normal" });
+  // Shop-name masthead — the letterhead, not order content. OMITTED when
+  // the raster logo prints above it: the logo's own sign already reads
+  // 樂福 in large type, so the text line just repeated it. Kept whenever
+  // the logo is unavailable (receipt-logo.js missing/invalid), so a label
+  // is never left without the shop name. Falls back to the literal shop
+  // name if the caller had no shopInfo (menu.json failed to load) — see
+  // staff.js's RECEIPT_FALLBACK_SHOP_NAME.
+  if (!withLogo) {
+    lines.push({ text: order.shopName || "樂福早餐店", align: "center", bold: true, size: "normal" });
+  }
 
   // 1. Order short_id (+ pickup time, grouped with it as "which order
   // is this" rather than as its own numbered step).
@@ -866,7 +868,15 @@ function buildCustomerLabelModel(order) {
 // buildReceiptLogoBytes() returns [] on any problem, so a missing or
 // broken logo just means a label without it.
 function buildCustomerLabel(order) {
-  return renderLinesToBytes(buildCustomerLabelModel(order), buildReceiptLogoBytes());
+  const logoBytes = buildReceiptLogoBytes();
+  const withLogo = logoBytes.length > 0; // decided by what will ACTUALLY print
+  return renderLinesToBytes(buildCustomerLabelModel(order, { withLogo }), logoBytes);
+}
+
+// For the on-screen preview — same "is the logo really printing?" test
+// as buildCustomerLabel(), so the preview can't disagree with the print.
+function buildCustomerLabelPreview(order) {
+  return buildCustomerLabelModel(order, { withLogo: buildReceiptLogoBytes().length > 0 });
 }
 
 let printerDevice = null;
@@ -1021,6 +1031,6 @@ window.ThermalPrinter = {
   getReceiptLogo, // for the on-screen preview (same bitmap the printer gets)
   PRINT_WIDTH_DOTS,
   buildKitchenTicketPreview: buildKitchenTicketModel,
-  buildCustomerLabelPreview: buildCustomerLabelModel,
+  buildCustomerLabelPreview,
   CHARS_PER_LINE,
 };
