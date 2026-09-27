@@ -19,6 +19,7 @@ every write in one transaction.
 | `02_place_order.sql` | Creates `public.place_order(...)`: security definer, `search_path = public`, EXECUTE for `service_role` only. It includes a commented-out BEGIN…ROLLBACK smoke test. | **Now**, after 01 checks out. Nothing calls it yet. |
 | `03_harden_existing.sql` | **Part A:** re-creates `reserve_pickup_slot()` with `SET search_path = public`; the body is unchanged and grants are kept. **Part B (commented out):** revokes anon EXECUTE on `reserve_pickup_slot` / `next_daily_order_number`. | **Part A now.** **Part B at cutover only.** |
 | `04_foreign_keys.sql` | **Part A:** read-only orphan report. **Part B:** commented-out options for cleaning up orphans. **Part C (commented out):** `stored_value_transactions.order_id` text → uuid, FKs from both tables to `orders(id)`, and dropping `spend_stored_value()`. | **Part A now.** **Part C at cutover only**, after orphans are handled. |
+| `05_staff_policies.sql` | Lockdown L1: `authenticated` SELECT+UPDATE on `orders` and SELECT on `members`, for the staff dashboard's Supabase Auth login. Added alongside the existing policies, so nothing changes until those are dropped. Starts and ends with read-only policy listings. | **Now.** Needs "Allow anonymous sign-ins" OFF (see file header). |
 
 ## Run order
 

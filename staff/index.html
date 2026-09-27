@@ -6,9 +6,46 @@
 <title>樂福</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="staff-style.css?v=20260927" />
+<link rel="stylesheet" href="staff-style.css?v=20260928" />
 </head>
 <body>
+
+  <!-- Staff account sign-in (Supabase Auth) — shown instead of the
+       dashboard whenever staff.js finds no valid session. This sits
+       BEHIND the Worker's PIN gate (worker.js), which still guards the
+       whole /staff/ subtree; this login is what gives the dashboard's
+       database requests the `authenticated` role. Needed once per
+       device — supabase-js keeps and refreshes the session after that
+       (under its own storage key, see STAFF_AUTH_STORAGE_KEY). -->
+  <section id="staff-login" class="staff-login" hidden>
+    <div class="staff-login-card">
+      <img class="logo-placeholder" src="../assets/logo.png" width="42" height="42" alt="樂福" />
+      <h1 class="staff-login-title">店務帳號登入</h1>
+      <p class="staff-login-hint">每台裝置只需登入一次</p>
+      <p id="staff-login-message" class="staff-login-message" hidden></p>
+      <form id="staff-login-form" novalidate>
+        <label class="note-label" for="staff-login-email">電子郵件</label>
+        <input id="staff-login-email" class="note-input" type="email" autocomplete="username" required />
+        <label class="note-label" for="staff-login-password">密碼</label>
+        <input id="staff-login-password" class="note-input" type="password" autocomplete="current-password" required />
+        <p id="staff-login-error" class="staff-login-error" hidden></p>
+        <button id="staff-login-submit" class="submit-btn" type="submit">登入</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Everything below the sign-in screen. A plain wrapper div (no CSS
+       display rule of its own) so [hidden] reliably hides it —
+       .staff-header sets display:flex unconditionally, so hiding the
+       header itself via [hidden] would silently not work (see
+       CLAUDE.md's hidden/toggle bug note). -->
+  <div id="staff-dashboard" hidden>
+
+  <!-- Shown if marking an order printed ever fails (e.g. lost
+       permissions): auto-print stops so nothing prints in a loop. -->
+  <div id="autoprint-halted-banner" class="staff-banner" hidden>
+    自動列印已暫停：訂單已列印但無法標記為「已列印」。請重新整理頁面，若仍發生請重新登入。
+  </div>
 
   <header class="staff-header">
     <div class="staff-header-left">
@@ -20,6 +57,7 @@
     </div>
     <button id="connect-printer-btn" class="connect-btn">🖨️ 連接印表機</button>
     <button id="stored-value-btn" class="connect-btn stored-value-btn">💰 會員儲值</button>
+    <button id="staff-signout-btn" class="signout-btn" type="button">登出</button>
   </header>
 
   <div class="columns">
@@ -52,6 +90,8 @@
     <summary class="test-orders-heading">🧪 測試訂單（不會自動列印）</summary>
     <div id="col-test" class="order-cards"></div>
   </details>
+
+  </div><!-- /#staff-dashboard -->
 
   <!-- Receipt preview — plain-text rendering of buildReceiptModel(),
        so print.js's layout/alignment can be checked without a
@@ -130,8 +170,8 @@
   </template>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
-  <script src="../supabase-config.js?v=20260927"></script>
+  <script src="../supabase-config.js?v=20260927-2"></script>
   <script src="../print.js?v=20260927"></script>
-  <script src="staff.js?v=20260927"></script>
+  <script src="staff.js?v=20260928"></script>
 </body>
 </html>

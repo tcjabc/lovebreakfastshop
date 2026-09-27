@@ -4,6 +4,139 @@
 
 const POLL_INTERVAL_MS = 5000; // check for new/updated orders every 5s
 
+// ============================================================
+// STAFF ACCOUNT (Supabase Auth)
+//
+// The dashboard signs in as the one Supabase Auth staff user, so its
+// database requests carry the `authenticated` role (see
+// supabase/sql/05_staff_policies.sql) instead of the public anon key.
+// The Worker PIN gate on /staff/* (worker.js) stays the front door;
+// this is the second layer.
+//
+// Its OWN client with its OWN auth storage key: the customer app runs
+// on the same origin and uses supabase-config.js's default client, so
+// sharing the default key would hand the staff session to any customer
+// page opened in this browser. With a separate key the customer app
+// never sees it.
+//
+// supabase-js persists the session in localStorage under this key and
+// refreshes the access token automatically, so staff sign in once per
+// device.
+// ============================================================
+const STAFF_AUTH_STORAGE_KEY = "lb-staff-auth";
+const staffClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { storageKey: STAFF_AUTH_STORAGE_KEY, persistSession: true, autoRefreshToken: true },
+});
+
+let pollTimer = null;
+
+function showLogin(message) {
+  stopPolling();
+  clearOrderColumns(); // don't leave order data on screen once signed out
+  document.getElementById("staff-dashboard").hidden = true;
+  const msgEl = document.getElementById("staff-login-message");
+  msgEl.textContent = message || "";
+  msgEl.hidden = !message;
+  document.getElementById("staff-login-error").hidden = true;
+  document.getElementById("staff-login").hidden = false;
+  document.getElementById("staff-login-email").focus();
+}
+
+function showDashboard() {
+  document.getElementById("staff-login").hidden = true;
+  document.getElementById("staff-dashboard").hidden = false;
+}
+
+function startPolling() {
+  stopPolling();
+  refresh();
+  pollTimer = setInterval(refresh, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+function clearOrderColumns() {
+  ["col-pending", "col-preparing", "col-ready", "col-test"].forEach((id) => {
+    document.getElementById(id).innerHTML = "";
+  });
+  document.getElementById("test-orders-section").hidden = true;
+}
+
+// Checked before every poll and every write. RLS denials are SILENT
+// (a signed-out SELECT just returns no rows; an UPDATE matches 0 rows),
+// so without this an expired session would look like an empty queue.
+// getSession() refreshes an expired access token itself; if that fails
+// the session comes back null. Returns true if it's safe to proceed.
+async function ensureStaffSession() {
+  const { data, error } = await staffClient.auth.getSession();
+  if (error || !data.session) {
+    if (error) console.error("[StaffAuth] session check failed", error);
+    showLogin("登入已失效，請重新登入。");
+    return false;
+  }
+  return true;
+}
+
+function loginErrorMessage(error) {
+  const code = error && (error.code || "");
+  const msg = ((error && error.message) || "").toLowerCase();
+  if (code === "invalid_credentials" || msg.includes("invalid login credentials")) return "電子郵件或密碼錯誤";
+  if (code === "email_not_confirmed") return "此帳號尚未完成驗證";
+  if (code === "over_request_rate_limit" || error.status === 429) return "嘗試次數過多，請稍後再試";
+  if (msg.includes("fetch") || msg.includes("network")) return "無法連線，請檢查網路後再試";
+  return "登入失敗，請稍後再試";
+}
+
+async function handleStaffLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById("staff-login-email").value.trim();
+  const passwordEl = document.getElementById("staff-login-password");
+  const errorEl = document.getElementById("staff-login-error");
+  const submitBtn = document.getElementById("staff-login-submit");
+  errorEl.hidden = true;
+
+  if (!email || !passwordEl.value) {
+    errorEl.textContent = "請輸入電子郵件和密碼";
+    errorEl.hidden = false;
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "登入中…";
+  try {
+    const { error } = await staffClient.auth.signInWithPassword({ email, password: passwordEl.value });
+    if (error) {
+      console.error("[StaffAuth] sign-in failed", error);
+      errorEl.textContent = loginErrorMessage(error);
+      errorEl.hidden = false;
+      return;
+    }
+    passwordEl.value = "";
+    showDashboard();
+    startPolling();
+  } catch (err) {
+    console.error("[StaffAuth] sign-in threw", err);
+    errorEl.textContent = loginErrorMessage(err);
+    errorEl.hidden = false;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "登入";
+  }
+}
+
+async function handleStaffSignOut() {
+  if (!confirm("確定要登出嗎？登出後需重新輸入帳號密碼。")) return;
+  // scope "local": sign out THIS device only. The shop has one shared
+  // staff account, so the default ("global") would also sign out every
+  // other tablet using it.
+  const { error } = await staffClient.auth.signOut({ scope: "local" });
+  if (error) console.error("[StaffAuth] sign-out failed", error);
+  showLogin("已登出。");
+}
+
 // Shop info from /menu.json (the dashboard only needs shopInfo — orders
 // carry their own item names/prices). null until loadShopInfo()
 // resolves, or if it failed; the order queue works either way.
@@ -41,9 +174,15 @@ async function loadShopInfo() {
 //     button instead, which isn't gated by this set.
 const printingInFlight = new Set();
 const printFailed = new Set();
+// Set once marking an order printed fails. Auto-print then stops for the
+// rest of this page session: the physical print already happened, and
+// with printed still false the next poll would print it again, forever.
+let autoPrintHalted = false;
 
+// null on error (as opposed to [] = genuinely no open orders), so a
+// failed fetch never wipes the columns and looks like an empty queue.
 async function fetchOrders() {
-  const { data, error } = await supabaseClient
+  const { data, error } = await staffClient
     .from("orders")
     .select("*")
     .in("status", ["pending", "preparing", "ready"])
@@ -51,7 +190,7 @@ async function fetchOrders() {
 
   if (error) {
     console.error("Fetch orders failed", error);
-    return [];
+    return null;
   }
   return data;
 }
@@ -134,15 +273,28 @@ function buildCard(order) {
   return card;
 }
 
-async function updateStatus(orderId, newStatus) {
-  const { error } = await supabaseClient
-    .from("orders")
-    .update({ status: newStatus })
-    .eq("id", orderId);
-
+// Updates one order and asks for the row back. An UPDATE that RLS
+// doesn't allow isn't an error — it just matches 0 rows — so "no row
+// came back" is treated as a failure too; a permissions problem must
+// never look like success. Returns true only if the row really changed.
+async function updateOrderRow(orderId, changes) {
+  const { data, error } = await staffClient.from("orders").update(changes).eq("id", orderId).select("id");
   if (error) {
-    console.error("Status update failed", error);
-    alert("更新失敗");
+    console.error("[Orders] update failed", changes, error);
+    return false;
+  }
+  if (!data || data.length === 0) {
+    console.error("[Orders] update matched 0 rows (no permission, or the order no longer exists)", orderId, changes);
+    return false;
+  }
+  return true;
+}
+
+async function updateStatus(orderId, newStatus) {
+  if (!(await ensureStaffSession())) return;
+  const ok = await updateOrderRow(orderId, { status: newStatus });
+  if (!ok) {
+    alert("更新失敗：訂單狀態沒有變更。可能是登入已失效或沒有權限，請重新整理頁面後再試。");
     return;
   }
   refresh();
@@ -167,15 +319,24 @@ function receiptDataFor(order) {
   };
 }
 
+// Returns whether printed=true actually landed (see updateOrderRow()).
 async function markPrinted(order) {
-  const { error } = await supabaseClient.from("orders").update({ printed: true }).eq("id", order.id);
-  if (error) {
-    // The physical print already happened at this point — logging
-    // rather than surfacing an alert, since there's nothing actionable
-    // for staff to do about a failed DB write. Worst case this order
-    // gets auto-printed again next poll tick (printed is still false).
-    console.error(`[Print] order #${order.short_id} printed but failed to mark printed=true:`, error);
-  }
+  return updateOrderRow(order.id, { printed: true });
+}
+
+// The physical print happened but printed=true didn't stick. Left alone,
+// the next poll would see printed=false and print it again every 5s — so
+// stop auto-print entirely (until reload), say so on screen, and alert
+// once. Manual 列印 still works.
+function haltAutoPrint(order) {
+  printFailed.add(order.id); // this order also shows the ⚠️ icon
+  document.getElementById("autoprint-halted-banner").hidden = false;
+  if (autoPrintHalted) return;
+  autoPrintHalted = true;
+  alert(
+    `訂單 #${order.short_id} 已列印，但無法標記為「已列印」（可能是登入已失效或沒有權限）。\n` +
+      "為避免重複列印，自動列印已暫停。請重新整理頁面，若仍發生請重新登入。"
+  );
 }
 
 // Shared by the manual Print button and the auto-print sweep below —
@@ -193,7 +354,10 @@ async function markPrinted(order) {
 async function handlePrint(order, { silent = false } = {}) {
   try {
     await ThermalPrinter.printOrder(receiptDataFor(order));
-    await markPrinted(order);
+    if (!(await markPrinted(order))) {
+      haltAutoPrint(order); // alerts even when silent — this one needs a human
+      return false;
+    }
     printFailed.delete(order.id);
     return true;
   } catch (err) {
@@ -211,6 +375,7 @@ async function handlePrint(order, { silent = false } = {}) {
 // ThermalPrinter's getDevices()-based path (see print.js) and prints
 // it through the exact same handlePrint() the manual button uses.
 function autoPrintPendingOrders(orders) {
+  if (autoPrintHalted) return; // see haltAutoPrint()
   orders
     .filter(
       (order) =>
@@ -277,11 +442,12 @@ function closePreview() {
 }
 
 async function refresh() {
+  if (!(await ensureStaffSession())) return; // signed out / refresh failed → sign-in screen, polling stopped
   const orders = await fetchOrders();
+  if (orders === null) return; // fetch failed — keep the last good render rather than showing an empty queue
 
-  // Test orders (is_test = true — set via isTesterMode() in
-  // supabase-config.js, called on login in app.js; see that file for
-  // its current, non-login-gating purpose) never mix into the live
+  // Test orders (is_test = true — decided server-side by place-order
+  // from feature_flags for the verified LINE user) never mix into the live
   // kitchen queue or its auto-print sweep; they render in their own
   // section below instead. Split once here rather than filtering in
   // the DB query so both views come from the same poll tick and can't
@@ -326,8 +492,8 @@ document.getElementById("connect-printer-btn").addEventListener("click", async (
 
 // ============================================================
 // 會員儲值 (Stored Value) — staff-only search → confirm → top-up flow.
-// Search reads `members` directly (RLS already permissive there, via
-// the existing publishable-key supabaseClient). Balance lookups and
+// Search reads `members` directly via the signed-in staffClient
+// (authenticated SELECT policy, see 05_staff_policies.sql). Balance lookups and
 // the actual top-up both go through PIN-gated Edge Functions
 // (get-stored-value-balance-staff / topup-stored-value) — staff have
 // no LINE identity of their own to verify, unlike the customer-facing
@@ -493,7 +659,8 @@ function renderSvResults(members) {
 }
 
 async function searchMembers(query) {
-  const { data, error } = await supabaseClient
+  if (!(await ensureStaffSession())) return;
+  const { data, error } = await staffClient
     .from("members")
     .select("user_id,display_name,picture_url,last_seen_at")
     .ilike("display_name", `%${query}%`)
@@ -644,10 +811,28 @@ document.getElementById("sv-search-input").addEventListener("input", (e) => {
   svSearchDebounce = setTimeout(() => searchMembers(query), 300);
 });
 
+document.getElementById("staff-login-form").addEventListener("submit", handleStaffLogin);
+document.getElementById("staff-signout-btn").addEventListener("click", handleStaffSignOut);
+
+// A session that disappears in the background (refresh token revoked,
+// signed out in another tab of this browser) goes straight back to the
+// sign-in screen instead of waiting for the next poll to notice.
+staffClient.auth.onAuthStateChange((event) => {
+  if (event === "SIGNED_OUT" && !document.getElementById("staff-dashboard").hidden) {
+    showLogin("登入已失效，請重新登入。");
+  }
+});
+
 // Shop info first, so the first auto-print sweep already has the shop
-// name for the receipt header. loadShopInfo() never rejects — on
-// failure the header shows the error and polling still starts.
-loadShopInfo().then(() => {
-  refresh();
-  setInterval(refresh, POLL_INTERVAL_MS);
+// name for the receipt header (loadShopInfo() never rejects). Then: a
+// stored, still-valid session → dashboard + polling; none → sign-in.
+// Polling only ever starts once signed in.
+loadShopInfo().then(async () => {
+  const { data } = await staffClient.auth.getSession();
+  if (data.session) {
+    showDashboard();
+    startPolling();
+  } else {
+    showLogin();
+  }
 });
