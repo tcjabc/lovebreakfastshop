@@ -398,8 +398,12 @@ Deliberately the same permissive "allow all" shape already used for
 `orders`/`members`, not the hardened zero-policy + Edge Function
 pattern used for Stored Value — favouriting isn't money, and a client
 can already write `orders.user_id` for anyone via the anon key today,
-so this doesn't introduce a new weakness. Written to directly from
-`app.js` via the existing Supabase client, no Edge Function.
+so this doesn't introduce a new weakness. **Update (lockdown L2b):** the
+app no longer writes this table directly — it goes through the
+`member-favorites` Edge Function (actions `list`/`add`/`remove`), which
+takes the member's id from the verified LIFF ID token and checks added
+item ids against `menu.json`. The "Allow all" policy above is dropped at
+the L4 cutover.
 
 Member-only: a star toggle (☆/★) appears on every item card (browse
 list, search results, popular row) only while logged in, optimistically

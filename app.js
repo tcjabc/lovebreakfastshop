@@ -337,7 +337,7 @@ function stepperHtml(item, hasOptions) {
 // called alongside wireStepper()).
 function favStarHtml(item) {
   const isFav = currentFavorites.has(item.id);
-  return `<button class="fav-star${isFav ? " active" : ""}" data-item-id="${item.id}" aria-label="我的最愛"${currentMember.userId ? "" : " hidden"}>${isFav ? "★" : "☆"}</button>`;
+  return `<button class="fav-star${isFav ? " active" : ""}" data-item-id="${item.id}" aria-label="我的最愛"${favoritesUsable() ? "" : " hidden"}>${isFav ? "★" : "☆"}</button>`;
 }
 
 function wireFavStar(container, item) {
@@ -1005,7 +1005,7 @@ async function callEdgeFunction(name, payload) {
       return { ok: false, code: "network", error: "伺服器回應格式錯誤" };
     }
   } catch (err) {
-    console.error(`[StoredValue] ${name} request failed`, err);
+    console.error(`[EdgeFunction] ${name} request failed`, err);
     return { ok: false, code: "network", error: "網路連線失敗" };
   }
 }
@@ -1412,8 +1412,9 @@ function handleLogout() {
   } catch (err) {
     console.error("[Login] liff.logout() failed", err);
   }
-  currentMember = { userId: null, isTest: false, profile: null };
+  currentMember = { userId: null, profile: null };
   currentFavorites = new Set();
+  favoritesUnavailable = false;
   frequentlyBoughtItemIds = null;
   stampProgress = null;
   currentHeaderBalance = null;
@@ -1424,13 +1425,10 @@ function handleLogout() {
   refreshBalanceWidgetUI();
 }
 
-// Current session's LINE identity. isTest is decided by isTesterMode()
-// (supabase-config.js) — it no longer means "gated behind a tester
-// flag to log in at all" (login is available to everyone, by choice);
-// it only flags this specific logged-in user's orders as test orders
-// so they land in staff/index.html's Test Orders section instead of the
-// live kitchen queue.
-let currentMember = { userId: null, isTest: false, profile: null };
+// Current session's LINE identity (userId null = guest). Whether this
+// member's orders count as test orders is decided server-side by
+// place-order from feature_flags, not here.
+let currentMember = { userId: null, profile: null };
 
 // Favourites/order-history state for the current member — both reset
 // to their logged-out defaults on logout (see handleLogout() below)
@@ -1452,13 +1450,37 @@ let guestCheckoutChosen = false;
 // call sites can't drift apart.
 async function syncLoggedInProfile(profile) {
   console.log(`[Login] ${profile.displayName} (${profile.userId})`);
-  const isTest = await isTesterMode(profile.userId);
-  currentMember = { userId: profile.userId, isTest, profile };
-  await upsertMember(profile);
+  currentMember = { userId: profile.userId, profile };
+  await syncMemberRecord();
   showMemberBadge(profile);
   await loadMemberPicks();
   await loadStampProgress();
   await loadStoredValueBalance();
+}
+
+// Refreshes this member's `members` row (display name, picture,
+// last_seen_at) via the upsert-member Edge Function, which takes every
+// value from the LIFF ID token's VERIFIED claims — never from anything
+// the client sends. Login must still complete if this fails (it's
+// bookkeeping, not a gate), so failures are only logged.
+async function syncMemberRecord() {
+  const idToken = currentIdToken();
+  if (!idToken) {
+    console.warn("[Members] no LIFF ID token — skipping upsert-member");
+    return;
+  }
+  const result = await callEdgeFunction("upsert-member", { id_token: idToken });
+  if (!result.ok) console.error("[Members] upsert-member failed — continuing login", result);
+}
+
+// This member's order history + frequently-bought item ids, from the
+// member-orders Edge Function (user id taken from the verified LIFF
+// token server-side). Same { ok, code, ... } shape as every other
+// callEdgeFunction() result.
+async function fetchMemberOrders() {
+  const idToken = currentIdToken();
+  if (!idToken) return { ok: false, code: "auth_invalid", error: "No LIFF ID token" };
+  return callEdgeFunction("member-orders", { id_token: idToken });
 }
 
 // ------------------------------------------------------------
@@ -1479,7 +1501,17 @@ async function syncLoggedInProfile(profile) {
 // through this function again, so that decision has to live in one
 // place both call sites share, not be duplicated between them.
 async function loadMemberPicks() {
-  currentFavorites = new Set(await getFavoriteItemIds(currentMember.userId));
+  const result = await callMemberFavorites("list");
+  if (result.ok) {
+    currentFavorites = new Set(result.item_ids || []);
+    favoritesUnavailable = false;
+  } else {
+    // Don't guess: with the real list unknown, hide the stars and the
+    // 我的最愛/常買推薦 row for this session rather than show wrong ones.
+    console.error("[Favorites] member-favorites list failed — hiding favourites this session", result);
+    currentFavorites = new Set();
+    favoritesUnavailable = true;
+  }
   frequentlyBoughtItemIds = null;
   refreshFavoriteUI();
   await renderMemberPicksRow();
@@ -1494,7 +1526,7 @@ async function loadMemberPicks() {
 function refreshFavoriteUI() {
   document.querySelectorAll(".fav-star").forEach((star) => {
     const isFav = currentFavorites.has(star.dataset.itemId);
-    star.hidden = !currentMember.userId;
+    star.hidden = !favoritesUsable();
     star.classList.toggle("active", isFav);
     star.textContent = isFav ? "★" : "☆";
   });
@@ -1504,8 +1536,7 @@ function refreshFavoriteUI() {
 // if the write fails, so the UI never ends up claiming a state that
 // didn't actually save.
 async function toggleFavorite(itemId) {
-  if (!currentMember.userId) return; // defensive — the star is [hidden] for guests in the first place
-  const userId = currentMember.userId;
+  if (!favoritesUsable()) return; // defensive — the star is [hidden] for guests / when favourites didn't load
   const wasFavorited = currentFavorites.has(itemId);
 
   if (wasFavorited) currentFavorites.delete(itemId);
@@ -1513,16 +1544,37 @@ async function toggleFavorite(itemId) {
   refreshFavoriteUI();
   await renderMemberPicksRow(); // reflect the change in 我的最愛/常買推薦 immediately too
 
-  try {
-    if (wasFavorited) await removeFavorite(userId, itemId);
-    else await addFavorite(userId, itemId);
-  } catch (err) {
-    console.error("[Favorites] toggle failed, reverting", err);
+  const result = await callMemberFavorites(wasFavorited ? "remove" : "add", itemId);
+  if (!result.ok) {
+    console.error("[Favorites] toggle failed, reverting", result);
     if (wasFavorited) currentFavorites.add(itemId);
     else currentFavorites.delete(itemId);
     refreshFavoriteUI();
     await renderMemberPicksRow();
+    alert(wasFavorited ? "無法移除我的最愛，請稍後再試" : "無法加入我的最愛，請稍後再試");
   }
+}
+
+// ---- member-favorites Edge Function ----
+// The member's user id is taken server-side from the verified LIFF ID
+// token — this never sends one. Same { ok, code, ... } result shape as
+// every other callEdgeFunction() call.
+async function callMemberFavorites(action, itemId) {
+  const idToken = currentIdToken();
+  if (!idToken) return { ok: false, code: "auth_invalid", error: "No LIFF ID token" };
+  const payload = { id_token: idToken, action };
+  if (itemId) payload.item_id = itemId;
+  return callEdgeFunction("member-favorites", payload);
+}
+
+// Set when the favourites list couldn't be loaded at login; the stars
+// and the 我的最愛/常買推薦 row stay hidden until the next login.
+let favoritesUnavailable = false;
+
+// Stars (and the picks row) only for a logged-in member whose
+// favourites actually loaded. Guests never see them — or trigger calls.
+function favoritesUsable() {
+  return Boolean(currentMember.userId) && !favoritesUnavailable;
 }
 
 // Exactly one of 我的最愛 (any favourites exist) / 常買推薦 (zero
@@ -1543,14 +1595,17 @@ async function renderMemberPicksRow() {
   const titleEl = document.getElementById("member-picks-title");
   const row = document.getElementById("member-picks-row");
 
-  if (!currentMember.userId) {
+  if (!favoritesUsable()) {
     wrap.hidden = true;
     row.innerHTML = "";
     return;
   }
 
   if (currentFavorites.size === 0 && frequentlyBoughtItemIds === null) {
-    frequentlyBoughtItemIds = await getFrequentlyBoughtItemIds(currentMember.userId);
+    // Any failure → [] → the row simply hides (nothing to suggest).
+    const result = await fetchMemberOrders();
+    if (!result.ok) console.error("[Favorites] member-orders failed — hiding 常買推薦", result);
+    frequentlyBoughtItemIds = result.ok && Array.isArray(result.frequent_item_ids) ? result.frequent_item_ids : [];
   }
 
   const itemIds = currentFavorites.size > 0 ? [...currentFavorites] : frequentlyBoughtItemIds;
@@ -1778,7 +1833,16 @@ async function openOrderHistorySheet() {
   const rows = document.getElementById("order-history-rows");
   rows.innerHTML = `<p class="order-history-empty">載入中…</p>`;
 
-  const orders = await getMemberOrderHistory(currentMember.userId);
+  const result = await fetchMemberOrders();
+  if (!result.ok) {
+    console.error("[OrderHistory] member-orders failed", result);
+    rows.innerHTML =
+      result.code === "auth_invalid"
+        ? `<p class="order-history-empty">登入已過期，請重新開啟頁面後再試</p>`
+        : `<p class="order-history-empty">訂單紀錄載入失敗，請稍後再試</p>`;
+    return;
+  }
+  const orders = result.orders || [];
 
   if (orders.length === 0) {
     rows.innerHTML = `<p class="order-history-empty">尚無訂單紀錄</p>`;

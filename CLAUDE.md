@@ -239,9 +239,12 @@ called, and it only ever runs from an explicit tap** — either the
 `openBenefitsCard()`, closable via its X or backdrop with zero side
 effects — no flag set, always reopenable) or the checkout dialog (see
 below). `syncLoggedInProfile()` is the shared "what happens once we
-have a real profile" step (`isTesterMode()` → `upsertMember()` →
-`showMemberBadge()`), used by both the silent page-load check and a
-successful explicit login so the two can't drift apart.
+have a real profile" step (`syncMemberRecord()` → the `upsert-member`
+Edge Function, then `showMemberBadge()`), used by both the silent
+page-load check and a successful explicit login so the two can't
+drift apart. `upsert-member` takes the member's id, name and picture
+from the VERIFIED LIFF ID token claims only; login still completes if
+it fails.
 * **Checkout dialog**: `submitOrder()` shows a "使用 LINE 登入" /
 "以訪客身份下單" choice for a currently-anonymous visitor, but only
 once per session — after "guest" is tapped once, `guestCheckoutChosen`
@@ -255,16 +258,23 @@ and the in-memory cart is lost on the way back, same as any full page
 reload today — there's no cart persistence across it), while
 already-logged-in-in-client resolves synchronously and the order
 proceeds attributed to that identity in the same call.
-* **`isTesterMode()` (`supabase-config.js`) is back, but its purpose
-changed — it is NOT a login gate anymore, and hasn't been since this
-redesign.** Login is available to everyone, always, by their own
-choice. `isTesterMode(userId)` now only decides whether a *logged-in*
-user's orders get `is_test = true`, so the shop owner's own testing
-orders land in `staff/index.html`'s Test Orders section instead of the live
-kitchen queue/auto-print. Called from `syncLoggedInProfile()` on every
-login. `feature_flags` (table, RLS policy, existing seeded row) was
-never dropped through any of this — only what the flag controls
-changed.
+* **Test mode is decided server-side.** `feature_flags.is_tester` is
+not a login gate (login is available to everyone, by choice); it only
+decides whether a *logged-in* user's orders get `is_test = true`, so
+the shop owner's own testing orders land in `staff/index.html`'s Test
+Orders section instead of the live kitchen queue/auto-print. The
+`place-order` Edge Function reads it for the verified LINE user — the
+customer app no longer reads `feature_flags` at all (the old
+client-side `isTesterMode()` was removed). Toggling a tester is still
+a manual `feature_flags` row edit in Supabase.
+* **Customer app's direct table access** (public key) is now ONLY the
+`pickup_slots` availability read (app.js `getPickupSlotTakenCounts()`).
+Member rows, order history and favourites go through the LIFF-verified
+`upsert-member`, `member-orders` and `member-favorites` Edge Functions
+(user id always from the verified token, never the request); orders
+are placed via `place-order`. The permissive `favorites`/`orders`/
+`members` RLS policies are still in place until the L4 cutover drops
+them.
 * The LIFF channel's scopes only had `chat_message.write` enabled
 (see README.md Step 3) — `profile` scope was turned on in the LINE
 Developers Console to get this far; if `liff.getProfile()` ever starts

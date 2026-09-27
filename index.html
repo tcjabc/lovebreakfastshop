@@ -276,8 +276,9 @@
        .checkout-sheet shell and .benefits-header/.benefits-close-btn
        header as #benefits-card above, rather than inventing new dialog
        chrome. Read-only: no reorder/re-add-to-cart action — see
-       renderOrderHistory() in app.js for the fetch (own orders only,
-       is_test excluded, capped at 20, no pagination) and empty state. -->
+       openOrderHistorySheet() in app.js; the data comes from the
+       member-orders Edge Function (own orders only, verified LIFF
+       token, is_test excluded, last 20, no pagination). -->
   <div id="order-history-backdrop" class="sheet-backdrop" hidden></div>
   <section id="order-history-sheet" class="checkout-sheet" hidden aria-label="Order history">
     <div class="sheet-handle"></div>
@@ -340,7 +341,7 @@
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
-  <script src="supabase-config.js?v=20260927-2"></script>
-  <script src="app.js?v=20260927-2"></script>
+  <script src="supabase-config.js?v=20260928-2"></script>
+  <script src="app.js?v=20260928-2"></script>
 </body>
 </html>
