@@ -5,3 +5,9 @@ CLAUDE.md
 README.md
 .dev.vars
 node_modules
+supabase
+.wrangler
+.claude
+DOCS
+worker.js
+wrangler.jsonc

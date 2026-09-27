@@ -37,7 +37,7 @@ NOT work for `staff/index.html` — WebUSB requires a secure context
 |`supabase/functions/`|Deno Edge Functions for Stored Value and the Weekday Stamp Card — the only code in this repo that runs server-side. Verifies identity (LINE ID token or staff PIN) before touching money; see "Server-side identity verification" below|
 |`worker.js`|Cloudflare Worker entrypoint — PIN-gates `/staff/*` only; every other request is served as a plain static asset without this file running at all. See "Deployment: Cloudflare Workers (not Pages)" below|
 |`wrangler.jsonc`|Worker config: `main` (`worker.js`), the `assets` binding, and `assets.run_worker_first` scoping the gate to `/staff/*`|
-|`.assetsignore`|Excludes `.git`, `.gitignore`, `CLAUDE.md`, `README.md`, `.dev.vars`, and `node_modules` from the public static-asset upload — see "Deployment" below before touching this or `assets.directory`|
+|`.assetsignore`|Excludes `.git`, `.gitignore`, `CLAUDE.md`, `README.md`, `.dev.vars`, `node_modules`, `supabase`, `.wrangler`, `.claude`, `DOCS`, `worker.js`, and `wrangler.jsonc` from the public static-asset upload — see "Deployment" below before touching this or `assets.directory`|
 |`README.md`|Full setup walkthrough (LINE Developer Console, LIFF, Supabase, Cloudflare Workers, printer pairing)|
 
 ## Deployment: Cloudflare Workers (not Pages)
@@ -71,11 +71,24 @@ Settings → Variables and Secrets) — never hardcoded or committed.
 repo root: without it, `wrangler deploy` would publish `.git/` (the
 entire commit history and object store), `.gitignore`, `CLAUDE.md`,
 and `README.md` as publicly fetchable static files — confirmed via
-`wrangler deploy --dry-run` before this file existed. Don't widen
+`wrangler deploy --dry-run` before this file existed. Later entries
+close the same kind of exposure for other non-public files:
+`supabase` (Edge Function source plus the Supabase CLI's local
+`.temp/` link state, e.g. `pooler-url`, `linked-project.json`),
+`.wrangler` (wrangler's local cache — including
+`wrangler-account.json` — and build output), `.claude` (local tool
+config), `DOCS`, and `worker.js`/`wrangler.jsonc` (the Worker is
+bundled from `main` separately, so excluding `worker.js` from assets
+doesn't affect the Worker build). As of 2026-09-27 the only published
+files are `index.html`, `app.js`, `supabase-config.js`, `print.js`,
+`style.css`, `menu.js`, `assets/*`, and `staff/index.html`/
+`staff.js`/`staff-style.css`. Don't widen
 `assets.directory` away from a `.assetsignore`-covered root, and don't
 delete or narrow `.assetsignore`'s entries, without re-checking that
 this doesn't reopen that exposure — see "Things NOT to change without
 discussion" below.
+
+Every file in the repo root is public unless listed in .assetsignore — check any new file or folder against it; verify with `WRANGLER_LOG=debug wrangler deploy --dry-run`.
 
 ## Staff dashboard PIN gate
 
