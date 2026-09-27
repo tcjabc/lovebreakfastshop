@@ -679,3 +679,11 @@ body {
   font-weight: 700;
   text-align: center;
 }
+
+/* Customer-label logo in the receipt preview — drawn dot-for-dot from the
+   printer bitmap; width set inline to its real share of the 576-dot line. */
+.receipt-preview-logo {
+  display: block;
+  margin: 4px auto 6px;
+  image-rendering: pixelated;
+}

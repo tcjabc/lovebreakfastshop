@@ -406,11 +406,13 @@ function autoPrintPendingOrders(orders) {
 // print. Two documents now print per order (kitchen ticket, customer
 // label); the preview shows both, in the same order they'll print, so
 // it can't drift from what printOrder() actually sends.
-function renderPreviewDoc(container, title, lines) {
+function renderPreviewDoc(container, title, lines, { withLogo = false } = {}) {
   const heading = document.createElement("div");
   heading.className = "receipt-preview-doc-title";
   heading.textContent = title;
   container.appendChild(heading);
+
+  if (withLogo) renderLogoPreview(container);
 
   lines.forEach((line) => {
     const div = document.createElement("div");
@@ -423,17 +425,85 @@ function renderPreviewDoc(container, title, lines) {
   });
 }
 
-function handlePreview(order) {
-  const data = receiptDataFor(order);
+// The customer label's raster logo, drawn dot-for-dot from the same
+// bitmap print.js sends (ThermalPrinter.getReceiptLogo()), at its real
+// share of the 576-dot line. Nothing is drawn if the logo is
+// unavailable — exactly like the printed label.
+function renderLogoPreview(container) {
+  const logo = ThermalPrinter.getReceiptLogo();
+  if (!logo) return;
+  const canvas = document.createElement("canvas");
+  canvas.width = logo.width;
+  canvas.height = logo.height;
+  canvas.className = "receipt-preview-logo";
+  canvas.style.width = `${(logo.width / ThermalPrinter.PRINT_WIDTH_DOTS) * 100}%`;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(logo.width, logo.height);
+  for (let y = 0; y < logo.height; y++) {
+    for (let x = 0; x < logo.width; x++) {
+      const black = logo.rows[y * logo.bytesPerRow + (x >> 3)] & (0x80 >> (x & 7));
+      const i = (y * logo.width + x) * 4;
+      const v = black ? 0 : 255;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  container.appendChild(canvas);
+}
 
+function handlePreview(order) {
+  showReceiptPreview(receiptDataFor(order), { kitchenTicket: true });
+}
+
+function showReceiptPreview(data, { kitchenTicket }) {
   const body = document.getElementById("receipt-preview-body");
   body.style.width = `${ThermalPrinter.CHARS_PER_LINE}ch`;
   body.innerHTML = "";
-  renderPreviewDoc(body, "🍳 廚房單", ThermalPrinter.buildKitchenTicketPreview(data));
-  renderPreviewDoc(body, "🧾 顧客收據", ThermalPrinter.buildCustomerLabelPreview(data));
+  if (kitchenTicket) renderPreviewDoc(body, "🍳 廚房單", ThermalPrinter.buildKitchenTicketPreview(data));
+  renderPreviewDoc(body, "🧾 顧客收據", ThermalPrinter.buildCustomerLabelPreview(data), { withLogo: true });
 
   document.getElementById("receipt-preview-backdrop").hidden = false;
   document.getElementById("receipt-preview").hidden = false;
+}
+
+// ---- 🧾 測試列印: one sample customer label (with the logo) ----
+// No order is created and nothing is marked printed. Every Chinese
+// character below is one print.js's GB18030_TABLE already covers
+// (checked), so the test shows real printer output, not fallback bytes.
+function sampleLabelData() {
+  return {
+    shopName: SHOP_INFO ? SHOP_INFO.name : RECEIPT_FALLBACK_SHOP_NAME,
+    shortId: "000",
+    items: [
+      { name: "肉排總匯", modifiers: "+加起司", qty: 1, subtotal: 90 },
+      { name: "脆薯", modifiers: "", qty: 2, subtotal: 60 },
+    ],
+    total: 150,
+    note: "測試列印，非訂單",
+    time: formatTime(new Date().toISOString()),
+    paymentMethod: "cash_on_pickup",
+    stampDiscount: 0,
+    pickupSlot: null,
+    memberName: null,
+    stampSnapshot: null,
+    balanceSnapshot: null,
+  };
+}
+
+async function handleTestLabel() {
+  const data = sampleLabelData();
+  showReceiptPreview(data, { kitchenTicket: false }); // show what's being printed
+  const btn = document.getElementById("test-label-btn");
+  btn.disabled = true;
+  try {
+    await ThermalPrinter.printTestLabel(data);
+  } catch (err) {
+    console.error("[TestLabel] print failed", err);
+    alert("測試列印失敗，請確認印表機已連接");
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function closePreview() {
@@ -477,6 +547,7 @@ async function refresh() {
   autoPrintPendingOrders(liveOrders); // test orders are never auto-printed
 }
 
+document.getElementById("test-label-btn").addEventListener("click", handleTestLabel);
 document.getElementById("receipt-preview-close").addEventListener("click", closePreview);
 document.getElementById("receipt-preview-backdrop").addEventListener("click", closePreview);
 

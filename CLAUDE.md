@@ -32,12 +32,13 @@ NOT work for `staff/index.html` — WebUSB requires a secure context
 |`index.html` / `app.js` / `style.css`|Customer-facing ordering app (opens in LIFF)|
 |`menu.json`|Single source of truth for menu data, prices, option/add-on ids, shop info, and the stamp-card/pickup-window rules — edited directly, no admin UI; fetched at runtime by `app.js` and `staff.js` (replaced `menu.js`). Any price/option change must bump its `version`; see its `_notes`|
 |`staff/index.html` / `staff/staff.js` / `staff/staff-style.css`|Staff tablet dashboard: order queue (Pending/Preparing/Ready), print button — moved from repo-root `staff.html`/`staff.js`/`staff-style.css` into `staff/` alongside the PIN gate (see "Staff dashboard PIN gate" below)|
+|`receipt-logo.js`|GENERATED: the black-and-white logo printed at the top of the customer label only, as pre-converted 1-bit ESC/POS raster rows (320 dots wide, base64) from `assets/logo-receipts-source.bmp`. Loaded before `print.js` on the staff page; if it's missing, labels print without it|
 |`print.js`|ESC/POS receipt building (separate kitchen ticket + customer label documents) + WebUSB printer connection (Chrome-on-Android only)|
 |`supabase-config.js`|Supabase client + order insert/favourites/order-history helpers, shared by customer and staff apps|
 |`supabase/functions/`|Deno Edge Functions for Stored Value and the Weekday Stamp Card — the only code in this repo that runs server-side. Verifies identity (LINE ID token or staff PIN) before touching money; see "Server-side identity verification" below|
 |`worker.js`|Cloudflare Worker entrypoint — PIN-gates `/staff/*` only; every other request is served as a plain static asset without this file running at all. See "Deployment: Cloudflare Workers (not Pages)" below|
 |`wrangler.jsonc`|Worker config: `main` (`worker.js`), the `assets` binding, and `assets.run_worker_first` scoping the gate to `/staff/*`|
-|`.assetsignore`|Excludes `.git`, `.gitignore`, `CLAUDE.md`, `README.md`, `.dev.vars`, `node_modules`, `supabase`, `.wrangler`, `.claude`, `DOCS`, `worker.js`, `wrangler.jsonc`, and `assets/logo-original.jpg` (the icon source image) from the public static-asset upload — see "Deployment" below before touching this or `assets.directory`|
+|`.assetsignore`|Excludes `.git`, `.gitignore`, `CLAUDE.md`, `README.md`, `.dev.vars`, `node_modules`, `supabase`, `.wrangler`, `.claude`, `DOCS`, `worker.js`, `wrangler.jsonc`, `assets/logo-original.jpg` (the icon source image), and `assets/logo-receipts-source.bmp` (the receipt-logo source) from the public static-asset upload — see "Deployment" below before touching this or `assets.directory`|
 |`README.md`|Full setup walkthrough (LINE Developer Console, LIFF, Supabase, Cloudflare Workers, printer pairing)|
 
 ## Deployment: Cloudflare Workers (not Pages)

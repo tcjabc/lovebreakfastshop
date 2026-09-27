@@ -33,6 +33,10 @@ const KNOWN_PRINTERS = [
 // second row, adjust this first.
 const CHARS_PER_LINE = 48;
 
+// Printable width in dots — Xprinter XP-Q200, 80mm paper, 203 DPI.
+// Used to centre the raster logo (see buildReceiptLogoBytes()).
+const PRINT_WIDTH_DOTS = 576;
+
 // Blank lines fed before the cut command, to clear this printer's
 // physical head-to-cutter gap. Starting guess — if the cut still
 // clips the last line of text, increase it; if there's a lot of
@@ -446,6 +450,75 @@ function textToBytes(str) {
   return new Uint8Array(bytes);
 }
 
+// ------------------------------------------------------------
+// Customer-label logo (raster image). The bitmap itself lives in
+// receipt-logo.js (window.RECEIPT_LOGO): pre-converted 1-bit rows,
+// base64-encoded, generated once from assets/logo-receipts-source.bmp.
+// Precomputed rather than decoding a PNG through <canvas> at print
+// time, because: the bytes are exactly what was previewed (no browser
+// scaling/colour management in between), there's nothing async to wait
+// on or fail inside the auto-print loop, and it needs no build step.
+//
+// NEVER blocks printing: anything wrong (file didn't load, bad data)
+// → null / no logo bytes, and the label prints without it.
+// ------------------------------------------------------------
+
+// { width, height, bytesPerRow, rows: Uint8Array } or null.
+let decodedReceiptLogo; // undefined = not tried yet; null = unavailable
+function getReceiptLogo() {
+  if (decodedReceiptLogo !== undefined) return decodedReceiptLogo;
+  decodedReceiptLogo = null;
+  try {
+    const logo = window.RECEIPT_LOGO;
+    if (!logo || typeof logo.data !== "string") return null;
+    const { width, height, bytesPerRow } = logo;
+    if (!(width > 0 && width % 8 === 0 && width <= PRINT_WIDTH_DOTS && bytesPerRow === width / 8 && height > 0)) {
+      throw new Error(`bad logo dimensions ${width}x${height} (${bytesPerRow} bytes/row)`);
+    }
+    const bin = atob(logo.data);
+    if (bin.length !== bytesPerRow * height) throw new Error(`logo data is ${bin.length} bytes, expected ${bytesPerRow * height}`);
+    const rows = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) rows[i] = bin.charCodeAt(i);
+    decodedReceiptLogo = { width, height, bytesPerRow, rows };
+  } catch (err) {
+    console.error("[ThermalPrinter] receipt logo unavailable — printing without it", err);
+  }
+  return decodedReceiptLogo;
+}
+
+// ESC/POS bytes for the logo, or [] if unavailable. Centred by padding
+// every row out to the full PRINT_WIDTH_DOTS with blank bytes on both
+// sides, rather than relying on ESC a (justification): not every
+// ESC/POS firmware applies ESC a to raster images, padding works on all.
+// One GS v 0 command (m=0, normal density):
+//   GS v 0 m xL xH yL yH d1…dk — x = bytes per row, y = number of rows.
+function buildReceiptLogoBytes() {
+  try {
+    const logo = getReceiptLogo();
+    if (!logo) return [];
+    const lineBytes = PRINT_WIDTH_DOTS / 8; // 72
+    const leftPad = Math.floor((lineBytes - logo.bytesPerRow) / 2);
+    // ESC a 0 (3) + GS v 0 m xL xH yL yH (8) + rows + ESC J n (3)
+    const out = new Uint8Array(3 + 8 + lineBytes * logo.height + 3);
+    let o = 0;
+    out[o++] = ESC; out[o++] = 0x61; out[o++] = 0x00; // left-justify: the padding does the centring
+    out[o++] = GS; out[o++] = 0x76; out[o++] = 0x30; out[o++] = 0x00; // GS v 0, m = 0
+    out[o++] = lineBytes & 0xff; out[o++] = (lineBytes >> 8) & 0xff;
+    out[o++] = logo.height & 0xff; out[o++] = (logo.height >> 8) & 0xff;
+    for (let y = 0; y < logo.height; y++) {
+      o += leftPad; // blank (0x00 = white) bytes, already zero
+      out.set(logo.rows.subarray(y * logo.bytesPerRow, (y + 1) * logo.bytesPerRow), o);
+      o += lineBytes - leftPad;
+    }
+    out[o++] = ESC; out[o++] = 0x4a; out[o++] = 16; // ESC J 16 — ~2mm gap before the text header
+    if (o !== out.length) throw new Error(`logo byte count mismatch: wrote ${o}, allocated ${out.length}`);
+    return out;
+  } catch (err) {
+    console.error("[ThermalPrinter] building receipt logo bytes failed — printing without it", err);
+    return [];
+  }
+}
+
 // Most CJK characters (and fullwidth punctuation) render at roughly
 // double the width of ASCII on thermal printers — e.g. 24x24 dots vs
 // 12x24 for Font A. Plain .length undercounts every Chinese character
@@ -490,12 +563,21 @@ function padColumns(left, right, width) {
 // label) build their own line list but go through this exact same
 // loop, so their align/bold/size state-tracking and init/cut framing
 // can't drift apart from each other even though their *content* does.
-function renderLinesToBytes(lines) {
+//
+// leadingBytes (optional): raw ESC/POS bytes sent right after the
+// printer init and before the first text line — the customer label's
+// raster logo (buildReceiptLogoBytes()).
+function renderLinesToBytes(lines, leadingBytes = null) {
   const bytes = [];
   const push = (...arr) => bytes.push(...arr);
   const pushText = (str) => push(...textToBytes(str));
 
   push(ESC, 0x40); // initialize printer — also resets align/bold/size to defaults
+  if (leadingBytes) {
+    // Plain loop, not push(...leadingBytes): the logo is ~21k bytes,
+    // enough to risk a "too many arguments" error with spread.
+    for (let i = 0; i < leadingBytes.length; i++) bytes.push(leadingBytes[i]);
+  }
 
   // Track current align/bold/size state and only emit a command when a
   // line's style actually differs from it — e.g. a centered/bold
@@ -779,8 +861,12 @@ function buildCustomerLabelModel(order) {
   return lines;
 }
 
+// The logo goes on the CUSTOMER label only — the kitchen ticket stays
+// text-only (fast to print, nothing for the kitchen to read in it).
+// buildReceiptLogoBytes() returns [] on any problem, so a missing or
+// broken logo just means a label without it.
 function buildCustomerLabel(order) {
-  return renderLinesToBytes(buildCustomerLabelModel(order));
+  return renderLinesToBytes(buildCustomerLabelModel(order), buildReceiptLogoBytes());
 }
 
 let printerDevice = null;
@@ -867,7 +953,9 @@ async function silentReconnect() {
   return openAndClaim(device);
 }
 
-async function printOrder(order) {
+// Connects (silently if already authorized) and returns the printer's
+// OUT endpoint number — shared by printOrder() and printTestLabel().
+async function getOutEndpoint() {
   if (!navigator.usb) {
     throw new Error("WebUSB not supported — use Chrome on Android.");
   }
@@ -894,6 +982,12 @@ async function printOrder(order) {
   // sidesteps that timing dependency entirely.
   const iface = printerDevice.configuration.interfaces[0];
   const endpoint = iface.alternates[0].endpoints.find((e) => e.direction === "out");
+  if (!endpoint) throw new Error("No OUT endpoint found on this printer's interface.");
+  return endpoint.endpointNumber;
+}
+
+async function printOrder(order) {
+  const endpointNumber = await getOutEndpoint();
 
   // Two separate documents, same short_id, sent as two sequential
   // jobs (each ends in its own cut) over the one connected printer.
@@ -902,8 +996,17 @@ async function printOrder(order) {
   // has already run or never runs — the caller (staff.js's
   // handlePrint) treats that as one failed print() call and won't
   // mark the order printed, same as today.
-  await printerDevice.transferOut(endpoint.endpointNumber, buildKitchenTicket(order));
-  await printerDevice.transferOut(endpoint.endpointNumber, buildCustomerLabel(order));
+  await printerDevice.transferOut(endpointNumber, buildKitchenTicket(order));
+  await printerDevice.transferOut(endpointNumber, buildCustomerLabel(order));
+}
+
+// Staff dashboard's 測試列印 button: prints ONLY a customer label (with
+// the logo) for sample data — no kitchen ticket, no order in the
+// database, nothing marked printed. For checking the logo and layout on
+// the real printer.
+async function printTestLabel(sampleOrder) {
+  const endpointNumber = await getOutEndpoint();
+  await printerDevice.transferOut(endpointNumber, buildCustomerLabel(sampleOrder));
 }
 
 // Exposed globally for staff.js to call. CHARS_PER_LINE and the two
@@ -914,6 +1017,9 @@ async function printOrder(order) {
 window.ThermalPrinter = {
   connectPrinter,
   printOrder,
+  printTestLabel,
+  getReceiptLogo, // for the on-screen preview (same bitmap the printer gets)
+  PRINT_WIDTH_DOTS,
   buildKitchenTicketPreview: buildKitchenTicketModel,
   buildCustomerLabelPreview: buildCustomerLabelModel,
   CHARS_PER_LINE,
