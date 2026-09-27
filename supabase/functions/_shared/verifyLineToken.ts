@@ -60,6 +60,13 @@ interface LineVerifyErrorResponse {
   error_description?: string;
 }
 
+/** Claims LINE vouched for — only ever built from LINE's verify response. */
+export interface VerifiedLineClaims {
+  sub: string;
+  name: string | null; // display name; present when the channel has the profile scope
+  picture: string | null;
+}
+
 /**
  * Verifies a LINE ID token and returns the verified LINE user id (`sub`)
  * on success. Throws LineTokenVerificationError on any failure — expired
@@ -67,6 +74,16 @@ interface LineVerifyErrorResponse {
  * unreachable are all distinguished via `err.code`.
  */
 export async function verifyLineToken(idToken: string): Promise<string> {
+  return (await verifyLineTokenClaims(idToken)).sub;
+}
+
+/**
+ * Same verification as verifyLineToken(), but also returns the `name`/
+ * `picture` claims from LINE's own verify response (never from the
+ * client) — for callers that need the member's display name, e.g.
+ * place-order's receipt name.
+ */
+export async function verifyLineTokenClaims(idToken: string): Promise<VerifiedLineClaims> {
   if (!idToken) {
     throw new LineTokenVerificationError("missing_token", "No id_token provided");
   }
@@ -144,5 +161,5 @@ export async function verifyLineToken(idToken: string): Promise<string> {
     );
   }
 
-  return ok.sub;
+  return { sub: ok.sub, name: ok.name ?? null, picture: ok.picture ?? null };
 }

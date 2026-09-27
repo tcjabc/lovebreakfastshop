@@ -6,7 +6,7 @@
 <title>樂福</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20260927" />
+<link rel="stylesheet" href="style.css?v=20260927-2" />
 </head>
 <body>
 
@@ -205,9 +205,16 @@
          .note-input's styling rather than inventing new select chrome. -->
     <label class="note-label" for="pickup-slot-select">取餐時間</label>
     <select id="pickup-slot-select" class="note-input"></select>
+    <!-- Shown when the 60s auto-refresh (startPickupSlotRefresh() in
+         app.js) had to move the customer off a slot that filled up or
+         got too close — "取餐時間已更新為 HH:MM". Hidden again on the
+         next manual change or sheet open. -->
+    <p id="pickup-slot-note" class="pickup-slot-note" hidden></p>
 
     <label class="note-label" for="order-note">備註</label>
-    <input id="order-note" class="note-input" type="text" placeholder="例如：不要香菜" />
+    <!-- maxlength matches place-order's NOTE_MAX_CHARS (100). -->
+    <input id="order-note" class="note-input" type="text" maxlength="100" placeholder="例如：不要香菜" />
+    <p id="order-note-count" class="note-count" aria-live="polite">0/100</p>
     <button id="submit-order" class="submit-btn">送出訂單</button>
     <button id="close-sheet" class="close-sheet-btn">繼續選購</button>
   </section>
@@ -324,7 +331,7 @@
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
-  <script src="supabase-config.js?v=20260927"></script>
-  <script src="app.js?v=20260927"></script>
+  <script src="supabase-config.js?v=20260927-2"></script>
+  <script src="app.js?v=20260927-2"></script>
 </body>
 </html>

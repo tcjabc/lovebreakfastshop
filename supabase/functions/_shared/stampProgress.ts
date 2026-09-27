@@ -16,6 +16,7 @@ export const STAMP_QUALIFYING_SPEND = 85;
 
 export interface StampProgress {
   days: [boolean, boolean, boolean, boolean]; // Mon, Tue, Wed, Thu
+  daySpend: [number, number, number, number]; // Mon..Thu order totals so far (NT$) — lets place-order add this order's own total
   unlocked: boolean;
   redeemed: boolean;
   weekStart: string; // "YYYY-MM-DD", the Monday of this week (Taipei)
@@ -31,6 +32,7 @@ export async function computeStampProgress(
   const weekStart = isoDateString(monday);
 
   const days: boolean[] = [];
+  const daySpends: number[] = [];
   for (let i = 0; i < 4; i++) {
     // Mon..Thu
     const day = addDays(monday, i);
@@ -46,6 +48,7 @@ export async function computeStampProgress(
 
     const daySpend = (data ?? []).reduce((sum: number, o: { total: number }) => sum + o.total, 0);
     days.push(daySpend >= STAMP_QUALIFYING_SPEND);
+    daySpends.push(daySpend);
   }
 
   const unlocked = days.every(Boolean);
@@ -60,6 +63,7 @@ export async function computeStampProgress(
 
   return {
     days: days as [boolean, boolean, boolean, boolean],
+    daySpend: daySpends as [number, number, number, number],
     unlocked,
     redeemed: !!redemption,
     weekStart,

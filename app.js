@@ -721,8 +721,8 @@ function confirmAddOptions() {
 // ------------------------------------------------------------
 // Pickup time slots — 15-minute slots across the shop's 6:00-9:00AM
 // Asia/Taipei window. Reservation itself is atomic and authoritative
-// server-side (reserve_pickup_slot() RPC, taken/p_max race-safe via a
-// single UPDATE) — everything here is just deciding what to show and
+// server-side (place-order → place_order() → reserve_pickup_slot(),
+// race-safe via a single UPDATE) — everything here is just deciding what to show and
 // pre-checking availability for display, never the real guarantee.
 //
 // Same "shift by the fixed +8h offset, read UTC fields as Taipei-local
@@ -735,13 +735,21 @@ function confirmAddOptions() {
 // Set from menu.json's rules.pickup by applyPickupRules() (called from
 // loadMenu()) — 15 / 6 / 06:00 / 09:00 / 30 as of this writing.
 let SLOT_LENGTH_MINUTES = null;
-let MAX_ORDERS_PER_SLOT = null; // also passed as p_max to reserve_pickup_slot()
+let MAX_ORDERS_PER_SLOT = null; // display only (已滿); place-order enforces the real cap server-side
 let PICKUP_WINDOW_START_MINUTES = null; // minutes after Taipei midnight, e.g. 06:00 → 360
 let PICKUP_WINDOW_END_MINUTES = null; // exclusive, so at 09:00 the last slot starts 8:45
 let PICKUP_MIN_LEAD_MINUTES = null;
 // Fixed +8h, not derived from rules.pickup.timezone — Asia/Taipei has
 // no DST, and menu.json's _notes say that field must stay Asia/Taipei.
 const PICKUP_TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000;
+// MUST equal SLOT_LEAD_GRACE_MINUTES in
+// supabase/functions/_shared/pickupSlot.ts. The picker OFFERS slots at
+// least minLeadMinutes ahead; the server still ACCEPTS an already-chosen
+// slot until it's less than (minLeadMinutes - this) ahead, so the
+// auto-refresh below only moves the customer off their slot once the
+// server would actually reject it.
+const PICKUP_LEAD_GRACE_MINUTES = 5;
+const PICKUP_REFRESH_MS = 60 * 1000;
 
 function parseClockMinutes(hhmm) {
   const [h, m] = String(hhmm).split(":").map(Number);
@@ -815,6 +823,28 @@ function getAvailablePickupSlots() {
   return buildSlotsForDay(addTaipeiDays(today, 1));
 }
 
+// Whether the server (place-order's validatePickupSlot()) would still
+// accept an already-chosen slot right now: strictly in the future, at
+// least (minLeadMinutes - PICKUP_LEAD_GRACE_MINUTES) ahead, and on
+// today's or tomorrow's Taipei date. Grid/window membership isn't
+// re-checked — the slot came from buildSlotsForDay() in the first place.
+function isChosenSlotStillAcceptable(slotDate) {
+  const now = Date.now();
+  const slotMs = slotDate.getTime();
+  if (slotMs <= now) return false;
+  const leadMinutes = Math.max(0, PICKUP_MIN_LEAD_MINUTES - PICKUP_LEAD_GRACE_MINUTES);
+  if (slotMs < now + leadMinutes * 60 * 1000) return false;
+  const dayNumber = (ms) => Math.floor((ms + PICKUP_TAIPEI_OFFSET_MS) / 86400000);
+  const dayDiff = dayNumber(slotMs) - dayNumber(now);
+  return dayDiff >= 0 && dayDiff <= 1;
+}
+
+// "06:15" — Taipei wall-clock time only.
+function formatPickupSlotTime(slotDate) {
+  const shifted = new Date(slotDate.getTime() + PICKUP_TAIPEI_OFFSET_MS);
+  return `${String(shifted.getUTCHours()).padStart(2, "0")}:${String(shifted.getUTCMinutes()).padStart(2, "0")}`;
+}
+
 // "9/8 (二) 06:00" — always includes the date, not just the time,
 // since the offered list may be today's remainder or tomorrow's full
 // list depending on when checkout is opened; the date is what makes
@@ -835,7 +865,7 @@ function formatPickupSlotLabel(slotDate) {
 // with no row yet reads as 0 taken, same as the RPC itself treats it.
 // On a fetch failure, returns an empty Map (every slot reads as 0/
 // available) rather than blocking the picker — this is purely a
-// display pre-check; reserve_pickup_slot() is the real, atomic
+// display pre-check; place-order's reservation is the real, atomic
 // enforcement regardless of what got shown here.
 async function getPickupSlotTakenCounts(slots) {
   const { data, error } = await supabaseClient
@@ -856,23 +886,35 @@ async function getPickupSlotTakenCounts(slots) {
   return takenByMs;
 }
 
-// Rebuilds #pickup-slot-select from scratch — called on every
-// openSheet() (times/availability can both change between opens) and
-// again after a reserve_pickup_slot() rejection (see submitOrder()) to
-// show the now-current picture with the just-filled slot disabled.
+// Rebuilds #pickup-slot-select from scratch. Called on every
+// openSheet() (fresh: first available slot selected), every
+// PICKUP_REFRESH_MS while the sheet is open, and after a slot_full /
+// slot_invalid rejection from place-order (both with keepSelection).
 // Full slots are shown, not hidden — disabled + labeled 已滿, so a
 // returning customer sees why a time they remember is gone rather than
-// it silently not being there. Selects the first available slot by
-// default; if every candidate is full (each slot × 6 orders — this
-// shop would need to be extraordinarily busy), the select ends up with
-// no valid value at all, which submitOrder() checks for explicitly.
-async function renderPickupSlotSection() {
+// it silently not being there. If every candidate is full, the select
+// ends up with no valid value at all, which submitOrder() checks for.
+//
+// keepSelection: keep the customer's current choice while the server
+// would still accept it (isChosenSlotStillAcceptable() — it stays in
+// the list even after it drops out of the normal offering, thanks to
+// the grace window) and it isn't full. Otherwise auto-select the next
+// available slot and say so under the picker.
+async function renderPickupSlotSection({ keepSelection = false } = {}) {
   const select = document.getElementById("pickup-slot-select");
+  const previousIso = keepSelection ? select.value : "";
   const candidates = getAvailablePickupSlots();
+  if (previousIso) {
+    const previous = new Date(previousIso);
+    if (!candidates.some((s) => s.getTime() === previous.getTime()) && isChosenSlotStillAcceptable(previous)) {
+      candidates.unshift(previous); // still valid server-side — keep offering it
+    }
+  }
   const takenByMs = await getPickupSlotTakenCounts(candidates);
 
   select.innerHTML = "";
   let firstAvailableValue = null;
+  let previousStillAvailable = false;
   candidates.forEach((slot) => {
     const iso = slot.toISOString();
     const taken = takenByMs.get(slot.getTime()) || 0;
@@ -885,9 +927,50 @@ async function renderPickupSlotSection() {
     select.appendChild(option);
 
     if (!full && firstAvailableValue === null) firstAvailableValue = iso;
+    if (!full && previousIso && new Date(previousIso).getTime() === slot.getTime()) previousStillAvailable = true;
   });
 
+  const noteEl = document.getElementById("pickup-slot-note");
+  if (previousStillAvailable) {
+    select.value = new Date(previousIso).toISOString();
+    return;
+  }
   if (firstAvailableValue) select.value = firstAvailableValue;
+  if (previousIso && firstAvailableValue) {
+    const chosen = new Date(firstAvailableValue);
+    const sameDay =
+      formatPickupSlotLabel(chosen).split(" ")[0] === formatPickupSlotLabel(new Date(previousIso)).split(" ")[0];
+    // HH:MM normally; the full date label if it moved to another day,
+    // so "06:00" can't be mistaken for today's 06:00.
+    noteEl.textContent = `取餐時間已更新為 ${sameDay ? formatPickupSlotTime(chosen) : formatPickupSlotLabel(chosen)}`;
+    noteEl.hidden = false;
+  }
+}
+
+// Keeps the picker honest while the checkout sheet sits open — started
+// by openSheet(), stopped by closeSheet(). Skips a tick while an order
+// is being submitted (the submit handler refreshes itself if needed)
+// or while a previous refresh is still in flight.
+let pickupRefreshTimer = null;
+let pickupRefreshInFlight = false;
+let orderSubmitting = false;
+
+function startPickupSlotRefresh() {
+  stopPickupSlotRefresh();
+  pickupRefreshTimer = setInterval(async () => {
+    if (pickupRefreshInFlight || orderSubmitting) return;
+    pickupRefreshInFlight = true;
+    try {
+      await renderPickupSlotSection({ keepSelection: true });
+    } finally {
+      pickupRefreshInFlight = false;
+    }
+  }, PICKUP_REFRESH_MS);
+}
+
+function stopPickupSlotRefresh() {
+  if (pickupRefreshTimer) clearInterval(pickupRefreshTimer);
+  pickupRefreshTimer = null;
 }
 
 // ------------------------------------------------------------
@@ -939,21 +1022,12 @@ async function callEdgeFunction(name, payload) {
 // Takes the amount actually due (post any Weekday Stamp Card discount,
 // not necessarily the raw cart total — see openSheet()) so the balance
 // check and displayed option both reflect what would really be
-// charged, not the pre-discount cart total.
-// The balance renderPaymentMethodSection() last fetched — kept around
-// so submitOrder() can record it on the order (orders.balance_snapshot,
-// see print.js's receipt) for a cash-paying member without a second
-// get-stored-value-balance call. null for a guest, before the first
-// fetch, or if the fetch failed — reset at the top of every
-// renderPaymentMethodSection() call so a stale balance from a
-// previous member/session can never leak into a later order.
-let currentStoredValueBalance = null;
-
+// charged, not the pre-discount cart total. (Display only — place-order
+// re-checks the balance and records balance_snapshot itself.)
 async function renderPaymentMethodSection(amountDue) {
   const section = document.getElementById("payment-method-section");
   document.getElementById("payment-method-cash").checked = true;
   section.hidden = true;
-  currentStoredValueBalance = null;
 
   if (!currentMember.userId) return;
   if (amountDue <= 0) return;
@@ -967,9 +1041,8 @@ async function renderPaymentMethodSection(amountDue) {
   if (!idToken) return;
 
   const result = await callEdgeFunction("get-stored-value-balance", { id_token: idToken });
-  if (!result.ok) return; // unreachable — no option shown, no balance to record either
+  if (!result.ok) return; // unreachable — no option shown
 
-  currentStoredValueBalance = result.balance;
   if (result.balance < amountDue) return; // insufficient — no option shown at all, not a disabled one
 
   document.getElementById("payment-method-stored-value-text").textContent =
@@ -977,7 +1050,16 @@ async function renderPaymentMethodSection(amountDue) {
   section.hidden = false;
 }
 
-async function openSheet() {
+// Items + stamp preview + total + payment choice — everything in the
+// sheet that depends on the cart. Split out of openSheet() so removing
+// a line (✕, or a line place-order rejected) re-renders these WITHOUT
+// resetting the pickup slot the customer already chose. Closes the
+// sheet if the cart just became empty.
+async function renderSheetCart() {
+  if (Object.keys(cart).length === 0) {
+    closeSheet();
+    return;
+  }
   const sheetItems = document.getElementById("sheet-items");
   sheetItems.innerHTML = "";
   Object.entries(cart).forEach(([id, line]) => {
@@ -999,15 +1081,16 @@ async function openSheet() {
     `;
     row.querySelector(".sheet-item-remove").addEventListener("click", () => {
       delete cart[id];
-      openSheet();
+      renderSheetCart();
       updateCartBar();
     });
     sheetItems.appendChild(row);
   });
 
-  // Weekday Stamp Card — same computeStampDiscount() submitOrder() will
-  // use to actually apply it, so the preview shown here can never
-  // disagree with what gets charged.
+  // Weekday Stamp Card preview — computeStampDiscount() is also what
+  // decides whether submitOrder() asks place-order to redeem. The
+  // server re-derives eligibility and the amount itself; the confirmed
+  // numbers shown afterwards come from its response.
   const stampDiscount = computeStampDiscount();
   document.getElementById("stamp-banner").hidden = !stampRedemptionEligible();
   const discountRow = document.getElementById("stamp-discount-row");
@@ -1021,42 +1104,61 @@ async function openSheet() {
   const amountDue = cartTotal() - (stampDiscount ? stampDiscount.discount : 0);
   document.getElementById("sheet-total").textContent = `NT$${amountDue}`;
   await renderPaymentMethodSection(amountDue);
+}
+
+async function openSheet() {
+  if (Object.keys(cart).length === 0) return;
+  await renderSheetCart();
+  document.getElementById("pickup-slot-note").hidden = true;
   await renderPickupSlotSection();
+  updateNoteCount();
   document.getElementById("sheet-backdrop").hidden = false;
   document.getElementById("checkout-sheet").hidden = false;
+  startPickupSlotRefresh();
 }
 
 function closeSheet() {
+  stopPickupSlotRefresh();
   document.getElementById("sheet-backdrop").hidden = true;
   document.getElementById("checkout-sheet").hidden = true;
 }
 
-function buildOrderMessage() {
+// Live "n/100" under the note box. Counted in characters (code points),
+// the same way place-order counts NOTE_MAX_CHARS.
+const NOTE_MAX_CHARS = 100;
+function updateNoteCount() {
+  const length = [...document.getElementById("order-note").value].length;
+  const countEl = document.getElementById("order-note-count");
+  countEl.textContent = `${length}/${NOTE_MAX_CHARS}`;
+  countEl.classList.toggle("over", length > NOTE_MAX_CHARS);
+}
+
+// Plain-text summary of a PLACED order, built from place-order's
+// response (never from the cart) — the Flex message's altText, which
+// LINE shows in notifications/chat previews and requires on every Flex
+// message. `note` is what the customer typed (the response doesn't
+// echo the cleaned note back).
+function buildOrderMessage(saved, note) {
   const lines = [`📋 新訂單`, ``];
-  Object.values(cart).forEach((line) => {
-    const item = findItem(line.itemId);
-    const unit = lineUnitPrice(item, line.selection);
-    const desc = describeSelection(item, line.selection);
-    const label = desc ? `${item.name}（${desc}）` : item.name;
-    lines.push(`${label} x${line.qty} — NT$${unit * line.qty}`);
+  saved.items.forEach((item) => {
+    const label = item.modifiers ? `${item.name}（${item.modifiers}）` : item.name;
+    lines.push(`${label} x${item.qty} — NT$${item.subtotal}`);
   });
-  lines.push(``, `總計：NT$${cartTotal()}`);
-
-  const note = document.getElementById("order-note").value.trim();
+  if (saved.stamp_discount) lines.push(`集點折抵 -NT$${saved.stamp_discount}`);
+  lines.push(``, `總計：NT$${saved.total}`);
   if (note) lines.push(``, `備註：${note}`);
-
   return lines.join("\n");
 }
 
-// Flex Message "receipt card" sent into the LINE chat alongside the
-// Supabase save — same Signature Red palette as style.css, hardcoded
+// Flex Message "receipt card" sent into the LINE chat after a
+// successful order — same Signature Red palette as style.css, hardcoded
 // here since Flex Message JSON is sent to LINE's API, not rendered by
 // our own CSS, so it can't reference the custom properties directly.
-// altText reuses buildOrderMessage()'s plain-text summary — it's what
-// LINE shows in push notifications / chat-list previews when the
-// bubble itself can't render, and it's required on every Flex Message.
-function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
-  const itemRows = orderItems.map((item) => ({
+// Everything on it comes from `saved`, place-order's response: the
+// server-priced items/total, stamp discount, payment method, stamp
+// snapshot and balance — the same values staff see and print.
+function buildOrderFlexMessage(saved, note, pickupTimeText) {
+  const itemRows = saved.items.map((item) => ({
     type: "box",
     layout: "horizontal",
     contents: [
@@ -1072,8 +1174,24 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
     ],
   }));
 
+  // Weekday Stamp Card discount, if the server applied one — without
+  // this row the item lines wouldn't add up to the total below.
+  const discountRows = saved.stamp_discount
+    ? [
+        {
+          type: "box",
+          layout: "horizontal",
+          contents: [
+            { type: "text", text: "集點折抵", size: "sm", color: "#2b211c", flex: 4 },
+            { type: "text", text: `-$${saved.stamp_discount}`, size: "sm", color: "#2b211c", flex: 1, align: "end" },
+          ],
+        },
+      ]
+    : [];
+
   const bodyContents = [
     ...itemRows,
+    ...discountRows,
     { type: "separator", margin: "md", color: "#fbdfda" },
     {
       type: "box",
@@ -1081,7 +1199,7 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
       margin: "md",
       contents: [
         { type: "text", text: "總計", weight: "bold", size: "md", color: "#e0132b" },
-        { type: "text", text: `NT$${total}`, weight: "bold", size: "md", color: "#e0132b", align: "end" },
+        { type: "text", text: `NT$${saved.total}`, weight: "bold", size: "md", color: "#e0132b", align: "end" },
       ],
     },
     // Payment status — unconditional (always one or the other), same
@@ -1100,10 +1218,10 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
 
   // Member-only block — stamp progress + stored-value balance, both
   // omitted entirely for a guest order rather than showing empty/zero
-  // placeholders. Reads straight off `saved` (the just-inserted order
-  // row), same source print.js's receiptDataFor() uses, rather than
-  // threading extra params through from submitOrder() — one less way
-  // for the chat card and the printed receipt to drift apart.
+  // placeholders. Reads straight off `saved` (place-order's response,
+  // the same values written to the order row print.js's
+  // receiptDataFor() reads) — one less way for the chat card and the
+  // printed receipt to drift apart.
   if (saved.member_name) {
     const days = (saved.stamp_snapshot && saved.stamp_snapshot.days) || [false, false, false, false];
     const unlocked = Boolean(saved.stamp_snapshot && saved.stamp_snapshot.unlocked);
@@ -1182,7 +1300,7 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
 
   return {
     type: "flex",
-    altText: buildOrderMessage() + `\n訂單編號 #${saved.short_id}`,
+    altText: buildOrderMessage(saved, note) + `\n訂單編號 #${saved.short_id}`,
     contents: {
       type: "bubble",
       header: {
@@ -1208,11 +1326,8 @@ function buildOrderFlexMessage(saved, orderItems, total, pickupTimeText) {
         layout: "vertical",
         backgroundColor: "#fbefe6",
         paddingAll: "16px",
-        // pickupTimeText is already the real reserved slot ("取餐時間：
-        // 9/8 (二) 06:00"), not a probabilistic estimate — see
-        // submitOrder()'s own comment where this is built. Nothing to
-        // change here; noting it since it was flagged as a possible
-        // pending item.
+        // pickupTimeText is the slot place-order actually reserved
+        // ("取餐時間：9/8 (二) 06:00"), built from saved.pickup_slot.
         contents: [{ type: "text", text: pickupTimeText, size: "xs", color: "#2b211c", wrap: true }],
       },
     },
@@ -1456,7 +1571,7 @@ async function renderMemberPicksRow() {
 // ------------------------------------------------------------
 // Weekday Stamp Card — spend NT$85+ each of Mon-Thu, redeem one free
 // drink (capped at rules.stamp.freeDrinkCap, NT$35) on Friday. All of the actual unlock/redeemed
-// logic lives server-side (get-stamp-progress / redeem-stamp-drink) —
+// logic lives server-side (get-stamp-progress / place-order) —
 // this section only ever displays what those returned and re-derives
 // the client-side "is it Friday, is there a drink in the cart to
 // redeem against" questions needed to decide what to show/send, never
@@ -1474,7 +1589,7 @@ let stampProgress = null;
 
 // Today's day-of-week per Asia/Taipei, independent of the visitor's
 // own device timezone — matches how the backend (get-stamp-progress /
-// redeem-stamp-drink, see _shared/taipeiWeek.ts) decides "is it
+// place-order, see _shared/taipeiWeek.ts) decides "is it
 // Friday", so the client's banner/redemption attempt can't disagree
 // with what the server will actually accept.
 function isTaipeiFriday() {
@@ -1510,12 +1625,22 @@ function findDrinkForStampRedemption() {
 
 // Whether this checkout COULD redeem the weekly free drink right now —
 // purely a client-side UI decision (show the banner, attempt the
-// call). redeem-stamp-drink re-derives unlocked/redeemed/is-it-Friday
+// request). place-order re-derives unlocked/redeemed/is-it-Friday
 // itself from the database regardless — this is never trusted as the
 // actual security check.
 function stampRedemptionEligible() {
-  return Boolean(currentMember.userId && stampProgress && stampProgress.unlocked && !stampProgress.redeemed && isTaipeiFriday());
+  return Boolean(
+    currentMember.userId && stampProgress && stampProgress.unlocked && !stampProgress.redeemed && isTaipeiFriday() &&
+      !stampRedemptionBlocked
+  );
 }
+
+// Set when place-order refuses a redemption (not_friday / not_unlocked /
+// already_redeemed / no_drink), for the rest of this page session — so
+// the retry goes through at full price instead of asking again and
+// looping on e.g. a device clock that disagrees with the server's
+// Taipei date.
+let stampRedemptionBlocked = false;
 
 // Single source for "how much would the free-drink redemption take off
 // this order right now" — called identically by openSheet()'s live
@@ -1689,10 +1814,7 @@ function closeOrderHistorySheet() {
 // Current member's balance as last fetched, for the header readout —
 // { balance:number } once loaded, null for a guest, before the first
 // fetch, or if the fetch failed (shown as "NT$—", not a stale/guessed
-// number — see refreshBalanceWidgetUI()). Deliberately a separate
-// variable from checkout's own currentStoredValueBalance above: that
-// one is scoped to "what was true when the checkout sheet last
-// opened" and reset every openSheet() call; this one is scoped to
+// number — see refreshBalanceWidgetUI()). Scoped to
 // "what's shown in the header right now" and only changes at login or
 // after an order actually spends stored value (see submitOrder()).
 let currentHeaderBalance = null;
@@ -1970,26 +2092,18 @@ async function submitOrder() {
     }
   }
 
-  const { userId, isTest } = currentMember;
-
-  const submitBtn = document.getElementById("submit-order");
-  submitBtn.disabled = true;
-  submitBtn.textContent = "送出中…";
-
-  const orderItems = Object.values(cart).map((line) => {
-    const item = findItem(line.itemId);
-    const unit = lineUnitPrice(item, line.selection);
-    return {
-      id: line.itemId,
-      name: item.name,
-      modifiers: describeSelection(item, line.selection), // "" when the item has no customization
-      qty: line.qty,
-      subtotal: unit * line.qty,
-    };
-  });
-  const rawTotal = cartTotal();
-  const note = document.getElementById("order-note").value.trim();
   const selectedSlotIso = document.getElementById("pickup-slot-select").value;
+  if (!selectedSlotIso) {
+    // Every candidate slot was full when renderPickupSlotSection() last
+    // ran — nothing to reserve against.
+    alert("目前無可預約的取餐時段，請稍後再試");
+    return;
+  }
+
+  // Cart keys in request order, so an error's `line` index (see
+  // place-order's pricing errors) maps back to the cart line to remove.
+  const lineKeys = Object.keys(cart);
+  const note = document.getElementById("order-note").value.trim();
 
   // Only ever "stored_value" if the section is actually visible — a
   // guest or insufficient-balance visitor can never end up on it no
@@ -2001,198 +2115,48 @@ async function submitOrder() {
       ? "stored_value"
       : "cash_on_pickup";
 
-  // Same computeStampDiscount() the checkout sheet's own preview used
-  // (see openSheet()) — can't disagree with what was just shown.
-  const stampDiscount = computeStampDiscount();
+  // ONE request: place-order prices every line from menu.json itself,
+  // verifies the LINE login, decides the stamp discount, validates the
+  // slot and note, then reserves the slot, assigns the order number,
+  // spends stored value, records the redemption and inserts the order
+  // in a single all-or-nothing transaction. Nothing here is trusted for
+  // money — the client only says what's in the cart and what the
+  // customer chose.
+  const request = {
+    menu_version: MENU_VERSION,
+    items: lineKeys.map((key) => ({ itemId: cart[key].itemId, qty: cart[key].qty, selection: cart[key].selection })),
+    note,
+    pickup_slot: selectedSlotIso,
+    payment_method: paymentMethod,
+    redeem_stamp: Boolean(computeStampDiscount()),
+  };
+  const idToken = currentIdToken();
+  if (idToken) request.id_token = idToken;
+
+  const submitBtn = document.getElementById("submit-order");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "送出中…";
+  orderSubmitting = true;
 
   try {
-    if (!selectedSlotIso) {
-      // Every candidate slot was full when renderPickupSlotSection()
-      // last ran (see its own comment — six orders × twelve slots is
-      // an extraordinarily busy day for this shop) — nothing to
-      // reserve against, so there's nothing sensible to submit.
-      alert("目前無可預約的取餐時段，請稍後再試");
+    const saved = await callEdgeFunction("place-order", request);
+    if (!saved.ok) {
+      await handlePlaceOrderFailure(saved, lineKeys);
       return;
     }
 
-    // Reserved first, before anything else below — no point spending
-    // stored value or redeeming a stamp-card drink against a pickup
-    // slot that might not even be available. reserve_pickup_slot() is
-    // the real, atomic guarantee (a single UPDATE ... taken < p_max);
-    // renderPickupSlotSection()'s own taken-count display is only ever
-    // a pre-check, so this can still legitimately come back full even
-    // though the slot looked open a moment ago.
-    const { data: reserved, error: reserveError } = await supabaseClient.rpc("reserve_pickup_slot", {
-      p_slot: selectedSlotIso,
-      p_max: MAX_ORDERS_PER_SLOT,
-    });
-
-    if (reserveError || reserved === null) {
-      // Nothing has been touched yet at this point (this runs before
-      // stamp redemption/stored-value spend/insertOrder below), so
-      // there's nothing to roll back either way. Refresh the picker
-      // (the now-full slot shows disabled) and let the customer pick
-      // again rather than silently failing or blocking checkout
-      // entirely.
-      if (reserveError) console.error("[Checkout] reserve_pickup_slot failed", reserveError);
-      alert("該時段已額滿，請重新選擇取餐時間");
-      await renderPickupSlotSection();
-      return;
-    }
-
-    // A stored-value spend and/or a stamp-card redemption both need the
-    // order's id generated client-side *before* the order itself
-    // exists (each is called against it before insertOrder() below) —
-    // generated once here, shared by whichever of the two actually
-    // applies, rather than each generating (and needing) its own.
-    // Cash-only orders with no redemption keep letting Postgres
-    // generate the id, exactly as before either feature existed.
-    let orderId = null;
-    if (paymentMethod === "stored_value" || stampDiscount) {
-      orderId = crypto.randomUUID();
-    }
-
-    // total starts undiscounted and is only ever reduced below, once
-    // redeem-stamp-drink has actually confirmed the redemption — never
-    // upfront, since the redemption can still fail (a concurrent
-    // redemption on another device, most likely) even though
-    // computeStampDiscount() said it should apply. stampDiscountApplied
-    // (as opposed to stampDiscount, which just says a discount *would*
-    // apply) is the actually-confirmed amount, recorded on the order
-    // itself (orders.stamp_discount) so the printed receipt can show a
-    // line explaining why the item lines don't sum to the total — see
-    // print.js's buildCustomerLabelModel().
-    let total = rawTotal;
-    let stampDiscountApplied = 0;
-
-    if (stampDiscount) {
-      let stampIdToken;
-      try {
-        stampIdToken = liff.getIDToken();
-      } catch (err) {
-        stampIdToken = null;
-      }
-
-      const redeemResult = stampIdToken
-        ? await callEdgeFunction("redeem-stamp-drink", { id_token: stampIdToken, order_id: orderId })
-        : { ok: false, code: "unknown", error: "No ID token available" };
-
-      if (redeemResult.ok) {
-        stampDiscountApplied = stampDiscount.discount;
-        total = rawTotal - stampDiscountApplied;
-      } else {
-        // The free drink is a bonus, not a payment method — this
-        // doesn't block checkout the way a failed stored-value spend
-        // does. Fall back to charging full price and let the order
-        // proceed; `total`/stampDiscountApplied stay at their
-        // undiscounted defaults above.
-        console.error("[Checkout] redeem-stamp-drink failed, charging full price", redeemResult);
-        alert("免費飲品兌換失敗，已按原價計算");
-      }
-    }
-
-    // Post-order-payment stored-value balance, for the receipt's
-    // balance_snapshot (see print.js) — the real post-deduction balance
-    // if stored value paid for this order, otherwise whatever
-    // renderPaymentMethodSection() already fetched when the sheet
-    // opened (currentStoredValueBalance). Either way, no extra
-    // get-stored-value-balance call here.
-    let balanceSnapshot = currentStoredValueBalance;
-
-    if (paymentMethod === "stored_value") {
-      let idToken;
-      try {
-        idToken = liff.getIDToken();
-      } catch (err) {
-        idToken = null;
-      }
-
-      const spendResult = idToken
-        ? await callEdgeFunction("spend-stored-value", {
-            id_token: idToken,
-            amount: total,
-            order_id: orderId,
-          })
-        : { ok: false, code: "unknown", error: "No ID token available" };
-
-      if (spendResult.ok) {
-        balanceSnapshot = spendResult.balance;
-        // Header readout already reflects this order's spend, before
-        // the LINE chat message/confirmation screen below even render
-        // — no extra get-stored-value-balance round trip needed since
-        // the spend itself already returned the new balance.
-        currentHeaderBalance = spendResult.balance;
-        refreshBalanceWidgetUI();
-      }
-
-      if (!spendResult.ok) {
-        // Most likely insufficient_funds from a race with another
-        // order placed elsewhere since the balance was already checked
-        // once when the sheet opened — not a hard failure. Let them
-        // retry with cash instead of blocking checkout outright; no
-        // order has been touched yet at this point, so there's nothing
-        // to roll back (a stamp-card redemption just above, if any,
-        // already succeeded and stays applied — it's independent of
-        // how the now-discounted total ends up getting paid).
-        console.error("[Checkout] spend-stored-value failed", spendResult);
-        alert("儲值餘額不足，請改用現場付款");
-        document.getElementById("payment-method-cash").checked = true;
-        paymentSection.hidden = true; // don't re-offer a balance we now know doesn't cover it, for the rest of this attempt
-        return;
-      }
-    }
-
-    let saved;
-    try {
-      // Save the order to Supabase — this is the source of truth for
-      // status tracking and printing at the shop.
-      saved = await insertOrder({
-        items: orderItems,
-        total,
-        note,
-        userId,
-        isTest,
-        id: orderId,
-        paymentMethod,
-        stampDiscount: stampDiscountApplied,
-        pickupSlot: selectedSlotIso,
-        memberName: currentMember.profile ? currentMember.profile.displayName : null,
-        stampSnapshot: stampProgress ? { days: stampProgress.days, unlocked: stampProgress.unlocked } : null,
-        balanceSnapshot,
-      });
-    } catch (err) {
-      console.error(err);
-      if (paymentMethod === "stored_value") {
-        // The spend above already succeeded — this is a genuinely bad
-        // state (money moved, no order recorded), not the ordinary
-        // "nothing happened yet, just retry" case. No automatic
-        // reconciliation exists yet, so this is surfaced distinctly
-        // rather than silently treated like any other retry-safe
-        // failure — a blind "retry" here would place a second, unpaid
-        // order while leaving the first deduction orphaned.
-        alert(`訂單儲存失敗，但儲值已扣款，請聯繫店員處理。訂單編號：${orderId}`);
-      } else {
-        alert("送出失敗，請重試");
-      }
-      return;
-    }
-
-    // From here on the order already exists — nothing below should be
-    // able to flip the UI back to "failed" and prompt a duplicate
-    // submission. Each optional step logs and continues on its own.
-
-    // A real reserved slot now exists (the RPC above already
-    // guaranteed it) — showing a probabilistic estimate alongside an
-    // actual commitment would just be confusing, so this replaces the
-    // old queue-based estimate entirely rather than showing both.
-    const pickupTimeText = `取餐時間：${formatPickupSlotLabel(new Date(selectedSlotIso))}`;
+    // From here on the order exists. Everything shown or sent below
+    // comes from the response (server-priced items/total, the slot it
+    // actually reserved, the order number), never from the cart.
+    const pickupTimeText = `取餐時間：${formatPickupSlotLabel(new Date(saved.pickup_slot))}`;
+    applyOrderResultToMemberWidgets(saved);
 
     try {
       // Also drop a copy into the LINE chat so it's visible there too
       // (optional — remove this block if you'd rather rely on the
       // staff tablet only).
       if (liff.isInClient()) {
-        await liff.sendMessages([buildOrderFlexMessage(saved, orderItems, total, pickupTimeText)]);
+        await liff.sendMessages([buildOrderFlexMessage(saved, note, pickupTimeText)]);
       }
     } catch (err) {
       console.error("LIFF sendMessages failed (order already saved, continuing):", err);
@@ -2204,12 +2168,180 @@ async function submitOrder() {
     closeSheet();
     Object.keys(cart).forEach((id) => delete cart[id]);
     document.getElementById("order-note").value = "";
+    updateNoteCount();
     renderMenu();
     updateCartBar();
     document.getElementById("confirm-screen").hidden = false;
   } finally {
+    orderSubmitting = false;
     submitBtn.disabled = false;
     submitBtn.textContent = "送出訂單";
+  }
+}
+
+// The current LIFF ID token, or null (guest, or LIFF unavailable).
+function currentIdToken() {
+  try {
+    return liff.isLoggedIn() ? liff.getIDToken() : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// After a successful MEMBER order, bring the header widgets up to date
+// from the response instead of re-fetching: the stamp snapshot already
+// includes this order (today's circle ticks if it reached the
+// threshold), and balance_snapshot is the balance after this order (or
+// the current balance, for a cash-paying member). Guests have neither.
+function applyOrderResultToMemberWidgets(saved) {
+  if (saved.stamp_snapshot) {
+    stampProgress = {
+      ...(stampProgress || {}),
+      days: saved.stamp_snapshot.days,
+      unlocked: saved.stamp_snapshot.unlocked,
+      redeemed: Boolean((stampProgress && stampProgress.redeemed) || saved.stamp_discount > 0),
+    };
+    refreshStampWidgetUI();
+  }
+  if (saved.balance_snapshot != null) {
+    currentHeaderBalance = saved.balance_snapshot;
+    refreshBalanceWidgetUI();
+  }
+}
+
+// place-order is all-or-nothing: on ANY error response nothing was
+// reserved, charged, redeemed or saved. Every message below says so —
+// except "network", where the request may have reached the server and
+// succeeded even though no response came back.
+const ORDER_NOT_CHARGED = "訂單未送出，未扣款。";
+
+// Request/cart shape problems — the cart no longer matches the menu or
+// the server's limits. Clear the offending line when place-order says
+// which one (`line`), otherwise ask for a reload.
+const CART_VALIDATION_CODES = new Set([
+  "empty_order",
+  "too_many_lines",
+  "invalid_line",
+  "invalid_qty",
+  "unknown_item",
+  "invalid_selection",
+  "unknown_group",
+  "group_not_on_item",
+  "unknown_option",
+  "unknown_addon",
+  "duplicate_id",
+  "thickness_invalid",
+  "invalid_request",
+  "invalid_input",
+]);
+
+async function handlePlaceOrderFailure(result, lineKeys) {
+  const code = result.code;
+  console.error("[Checkout] place-order failed", result);
+
+  switch (code) {
+    case "menu_outdated":
+      alert(`菜單已更新，頁面將重新載入。${ORDER_NOT_CHARGED}`);
+      // Cart + note survive the reload (lines that no longer exist in
+      // the new menu are dropped on restore).
+      persistCartForLoginRedirect();
+      location.reload();
+      return;
+
+    case "slot_full":
+      alert(`該取餐時段已額滿，請重新選擇取餐時間。${ORDER_NOT_CHARGED}`);
+      await renderPickupSlotSection({ keepSelection: true }); // full slot now disabled; next one auto-selected with a note
+      return;
+
+    case "slot_invalid":
+      alert(`此取餐時間已無法預約，請重新選擇取餐時間。${ORDER_NOT_CHARGED}`);
+      document.getElementById("pickup-slot-note").hidden = true;
+      await renderPickupSlotSection(); // fresh list — don't keep a slot the server just refused
+      return;
+
+    case "insufficient_funds":
+      alert(`儲值餘額不足，請改用現場付款。${ORDER_NOT_CHARGED}`);
+      document.getElementById("payment-method-cash").checked = true;
+      document.getElementById("payment-method-section").hidden = true;
+      loadStoredValueBalance(); // refresh the header readout
+      return;
+
+    case "already_redeemed":
+    case "not_unlocked":
+    case "not_friday":
+    case "no_drink": {
+      const reason = {
+        already_redeemed: "本週免費飲品已兌換過",
+        not_unlocked: "本週集點尚未完成",
+        not_friday: "免費飲品僅限週五兌換",
+        no_drink: "購物車中沒有可兌換的飲品",
+      }[code];
+      alert(`${reason}，將改以原價計算，請確認金額後再送出。${ORDER_NOT_CHARGED}`);
+      stampRedemptionBlocked = true;
+      if (code === "already_redeemed" && stampProgress) stampProgress.redeemed = true;
+      refreshStampWidgetUI();
+      await renderSheetCart(); // discount row gone, total back to full price
+      return;
+    }
+
+    case "guest_not_allowed":
+      alert(`使用儲值或集點需先登入LINE會員。${ORDER_NOT_CHARGED}`);
+      openBenefitsCard();
+      return;
+
+    case "auth_invalid":
+      if (confirm(`LINE登入已過期，請重新登入。${ORDER_NOT_CHARGED}\n\n要現在重新登入嗎？`)) {
+        reloginWithLine();
+      }
+      return;
+
+    case "auth_unavailable":
+      alert(`LINE連線忙碌中，請稍後再試。${ORDER_NOT_CHARGED}`);
+      return;
+
+    case "note_too_long":
+      alert(`備註最多${NOTE_MAX_CHARS}字，請縮短後再送出。${ORDER_NOT_CHARGED}`);
+      document.getElementById("order-note").focus();
+      return;
+
+    case "network":
+      // The ONLY case where we can't promise nothing happened: the
+      // request may have been processed before the connection dropped.
+      alert("網路連線不穩，無法確認訂單是否已送出。為避免重複下單，會員請先查看「訂單紀錄」，或直接聯繫店家確認。");
+      return;
+  }
+
+  if (CART_VALIDATION_CODES.has(code)) {
+    const key = Number.isInteger(result.line) ? lineKeys[result.line] : null;
+    if (key && cart[key]) {
+      delete cart[key];
+      updateCartBar();
+      await renderSheetCart();
+      alert(`購物車內容需要更新，已移除一項無法訂購的餐點，請確認後再送出。${ORDER_NOT_CHARGED}`);
+    } else {
+      alert(`購物車內容需要更新，請重新整理頁面後再試。${ORDER_NOT_CHARGED}`);
+    }
+    return;
+  }
+
+  alert(`送出失敗，請稍後再試。${ORDER_NOT_CHARGED}`);
+}
+
+// auth_invalid: the LIFF ID token was rejected (typically expired).
+// Log out and back in for a fresh one, keeping the cart and note across
+// the reload. Inside LINE, liff.init() logs back in automatically on
+// reload; outside LINE, liff.login() redirects to LINE's login page.
+function reloginWithLine() {
+  persistCartForLoginRedirect();
+  try {
+    liff.logout();
+  } catch (err) {
+    console.error("[Login] liff.logout() failed", err);
+  }
+  if (liff.isInClient()) {
+    location.reload();
+  } else {
+    liff.login();
   }
 }
 
@@ -2220,6 +2352,10 @@ function wireUpUI() {
   document.getElementById("close-sheet").addEventListener("click", closeSheet);
   document.getElementById("sheet-backdrop").addEventListener("click", closeSheet);
   document.getElementById("submit-order").addEventListener("click", submitOrder);
+  document.getElementById("order-note").addEventListener("input", updateNoteCount);
+  document.getElementById("pickup-slot-select").addEventListener("change", () => {
+    document.getElementById("pickup-slot-note").hidden = true; // the customer chose for themselves
+  });
   document.getElementById("confirm-close").addEventListener("click", () => {
     document.getElementById("confirm-screen").hidden = true;
     if (liff.isInClient()) liff.closeWindow();

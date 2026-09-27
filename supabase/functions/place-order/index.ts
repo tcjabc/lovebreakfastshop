@@ -1,0 +1,328 @@
+// ============================================================
+// place-order
+//
+// The single server-side path for placing an order. Verifies who's
+// ordering (LIFF ID token, or guest), prices every line from the live
+// menu.json (never trusting client prices/descriptions), decides the
+// stamp-card discount and stamp snapshot, validates the pickup slot and
+// note, then calls public.place_order() (supabase/sql/02_place_order.sql)
+// — one Postgres transaction that reserves the slot, assigns the order
+// number, spends stored value, records the stamp redemption and inserts
+// the order, all-or-nothing.
+//
+// Request:  POST {
+//   id_token?:      string   // omit/null for a guest
+//   menu_version:   string   // menu.json "version" the client priced with
+//   items:          [{ itemId, qty, selection }]   // cart v2 shape (ids)
+//   note?:          string
+//   pickup_slot:    string   // ISO timestamp of the slot start
+//   payment_method: "cash_on_pickup" | "stored_value"
+//   redeem_stamp?:  boolean
+// }
+// Success:  200 { ok: true, id, short_id, total, stamp_discount, items,
+//                 payment_method, balance_snapshot, stamp_snapshot,
+//                 member_name, pickup_slot, is_test }
+// Failure:  { ok: false, code, error, line? } with:
+//   400 invalid_request / pricing codes (see _shared/pricing.ts) /
+//       slot_invalid / note_too_long / guest_not_allowed / no_drink /
+//       not_friday / invalid_input
+//   401 auth_invalid          402 insufficient_funds
+//   409 menu_outdated / slot_full / already_redeemed / not_unlocked
+//   503 auth_unavailable (LINE unreachable)   500 server_error
+//
+// Secrets/env: MENU_URL (the live /menu.json); SUPABASE_URL and
+// SUPABASE_SERVICE_ROLE_KEY are injected by Supabase.
+// ============================================================
+
+import { verifyLineTokenClaims, LineTokenVerificationError } from "../_shared/verifyLineToken.ts";
+import { getServiceClient } from "../_shared/supabaseServiceClient.ts";
+import { corsHeaders } from "../_shared/cors.ts";
+import { computeStampProgress, STAMP_QUALIFYING_SPEND } from "../_shared/stampProgress.ts";
+import { priceLines, toOrderItems, PricingError, type MenuData, type PricedLine } from "../_shared/pricing.ts";
+import { validatePickupSlot } from "../_shared/pickupSlot.ts";
+
+const FRIDAY = 5; // taipeiNow().dayOfWeek convention: 0=Sun..6=Sat
+const MENU_CACHE_MS = 60 * 1000;
+const NOTE_MAX_CHARS = 100;
+
+function json(body: unknown, status: number) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders },
+  });
+}
+
+function fail(status: number, code: string, error: string, extra: Record<string, unknown> = {}) {
+  return json({ ok: false, code, error, ...extra }, status);
+}
+
+// ---- menu.json, cached in memory for 60s per isolate ------------------
+
+let menuCache: { data: MenuData; fetchedAt: number } | null = null;
+
+async function fetchMenu(): Promise<MenuData> {
+  const url = Deno.env.get("MENU_URL");
+  if (!url) throw new Error("MENU_URL is not set for this Edge Function");
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`menu.json fetch failed: HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data || typeof data.version !== "string" || !Array.isArray(data.menu) || !data.modifierGroups || !data.rules) {
+    throw new Error("menu.json is missing required fields");
+  }
+  menuCache = { data, fetchedAt: Date.now() };
+  return data;
+}
+
+async function getMenu(clientVersion: string): Promise<MenuData | null> {
+  let menu = menuCache && Date.now() - menuCache.fetchedAt < MENU_CACHE_MS ? menuCache.data : await fetchMenu();
+  if (menu.version !== clientVersion) {
+    menu = await fetchMenu(); // maybe menu.json was just updated — refetch once
+    if (menu.version !== clientVersion) return null;
+  }
+  return menu;
+}
+
+// ---- note --------------------------------------------------------------
+
+// Trim, turn line breaks/tabs into spaces, drop every other control
+// character. Returns null for empty, or "too_long" past NOTE_MAX_CHARS
+// (counted in characters, not UTF-16 units).
+function cleanNote(raw: unknown): string | null | "too_long" | "invalid" {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") return "invalid";
+  const cleaned = raw
+    .replace(/[\r\n\t\u2028\u2029]+/g, " ")
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+    .trim();
+  if (cleaned === "") return null;
+  if ([...cleaned].length > NOTE_MAX_CHARS) return "too_long";
+  return cleaned;
+}
+
+// ---- stamp card --------------------------------------------------------
+
+// Same choice app.js's findDrinkForStampRedemption() makes: the most
+// expensive line (by unit price) in the drink category.
+function stampDiscountFor(lines: PricedLine[], rules: MenuData["rules"]["stamp"]): number | null {
+  const drinks = lines.filter((l) => l.category === rules.drinkCategory);
+  if (drinks.length === 0) return null;
+  const best = Math.max(...drinks.map((l) => l.unitPrice));
+  return Math.min(best, rules.freeDrinkCap);
+}
+
+// ---- place_order() error mapping ----------------------------------------
+
+const RPC_ERRORS: Record<string, { status: number; code: string; error: string }> = {
+  LB001: { status: 409, code: "slot_full", error: "That pickup slot is full" },
+  LB002: { status: 409, code: "already_redeemed", error: "This week's free drink was already redeemed" },
+  LB003: { status: 402, code: "insufficient_funds", error: "Not enough stored value balance" },
+  LB004: { status: 400, code: "not_friday", error: "Free drink redemption is only available on Friday" },
+  LB010: { status: 400, code: "invalid_input", error: "Order rejected as invalid" },
+};
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+  if (req.method !== "POST") {
+    return fail(405, "invalid_request", "POST only");
+  }
+
+  // ---- request shape ----
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return fail(400, "invalid_request", "Body must be JSON");
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return fail(400, "invalid_request", "Body must be a JSON object");
+  }
+  const { id_token, menu_version, items, note, pickup_slot, payment_method } = body;
+  const redeemStamp = body.redeem_stamp ?? false;
+  if (typeof menu_version !== "string" || menu_version === "") {
+    return fail(400, "invalid_request", "menu_version is required");
+  }
+  if (payment_method !== "cash_on_pickup" && payment_method !== "stored_value") {
+    return fail(400, "invalid_request", 'payment_method must be "cash_on_pickup" or "stored_value"');
+  }
+  if (typeof redeemStamp !== "boolean") {
+    return fail(400, "invalid_request", "redeem_stamp must be a boolean");
+  }
+  if (id_token !== undefined && id_token !== null && typeof id_token !== "string") {
+    return fail(400, "invalid_request", "id_token must be a string");
+  }
+
+  try {
+    const supabase = getServiceClient();
+
+    // ---- 1. menu ----
+    let menu: MenuData | null;
+    try {
+      menu = await getMenu(menu_version);
+    } catch (err) {
+      console.error("[place-order] menu fetch failed", err);
+      return fail(500, "server_error", "Could not load the menu");
+    }
+    if (!menu) return fail(409, "menu_outdated", "The menu has changed — reload and try again");
+
+    // ---- 2. identity ----
+    let userId: string | null = null;
+    let memberName: string | null = null;
+    if (typeof id_token === "string") {
+      try {
+        const claims = await verifyLineTokenClaims(id_token);
+        userId = claims.sub;
+        memberName = claims.name;
+      } catch (err) {
+        if (err instanceof LineTokenVerificationError) {
+          if (err.code === "network" || err.code === "config" || err.code === "unknown") {
+            console.error("[place-order] LINE verification unavailable", err);
+            return fail(503, "auth_unavailable", "Could not verify LINE login right now");
+          }
+          return fail(401, "auth_invalid", "LINE login is invalid or expired");
+        }
+        throw err;
+      }
+    }
+    if (!userId && (payment_method === "stored_value" || redeemStamp)) {
+      return fail(400, "guest_not_allowed", "Stored value and the stamp card need a LINE login");
+    }
+    if (userId && !memberName) {
+      // No name claim (profile scope off?) — fall back to the name the
+      // member row already has, if any.
+      const { data } = await supabase.from("members").select("display_name").eq("user_id", userId).maybeSingle();
+      memberName = data?.display_name ?? null;
+    }
+
+    // ---- 3. tester ----
+    let isTest = false;
+    if (userId) {
+      const { data, error } = await supabase
+        .from("feature_flags")
+        .select("is_tester")
+        .eq("line_user_id", userId)
+        .maybeSingle();
+      if (error) {
+        // Same fail-closed choice as isTesterMode(): never drop a real
+        // order out of the live kitchen queue over a lookup hiccup.
+        console.error("[place-order] feature_flags lookup failed — treating as a real order", error);
+      } else {
+        isTest = Boolean(data && data.is_tester);
+      }
+    }
+
+    // ---- 4. price ----
+    let lines: PricedLine[];
+    try {
+      lines = priceLines(menu, items);
+    } catch (err) {
+      if (err instanceof PricingError) {
+        return fail(400, err.code, err.message, err.line === null ? {} : { line: err.line });
+      }
+      throw err;
+    }
+    const rawTotal = lines.reduce((sum, l) => sum + l.subtotal, 0);
+
+    // Cheap input checks (7, 8) before the stamp-card DB reads below.
+    // ---- 7. pickup slot ----
+    const slot = validatePickupSlot(pickup_slot, menu.rules.pickup);
+    if (!slot) return fail(400, "slot_invalid", "That pickup time isn't available");
+
+    // ---- 8. note ----
+    const cleanedNote = cleanNote(note);
+    if (cleanedNote === "invalid") return fail(400, "invalid_request", "note must be a string");
+    if (cleanedNote === "too_long") return fail(400, "note_too_long", `Note must be at most ${NOTE_MAX_CHARS} characters`);
+
+    // ---- 5 + 6. stamp card: redemption + snapshot (members only) ----
+    let stampDiscount = 0;
+    let stampSnapshot: { days: boolean[]; unlocked: boolean } | null = null;
+    let progress = null;
+    if (userId) {
+      progress = await computeStampProgress(supabase, userId);
+    }
+    if (redeemStamp && progress) {
+      if (progress.todayDayOfWeek !== FRIDAY) {
+        return fail(400, "not_friday", "Free drink redemption is only available on Friday");
+      }
+      if (!progress.unlocked) {
+        return fail(409, "not_unlocked", "This week's stamp card is not complete");
+      }
+      if (progress.redeemed) {
+        return fail(409, "already_redeemed", "This week's free drink was already redeemed");
+      }
+      const discount = stampDiscountFor(lines, menu.rules.stamp);
+      if (discount === null) return fail(400, "no_drink", "Add a drink to redeem the free drink");
+      stampDiscount = discount;
+    }
+    const total = rawTotal - stampDiscount;
+
+    if (progress) {
+      // Reflect THIS order: on Mon–Thu, today's circle is ticked if
+      // today's spend so far plus this order's total meets the threshold.
+      const days = [...progress.days];
+      const todayIndex = progress.todayDayOfWeek - 1; // Mon=0 .. Thu=3
+      if (todayIndex >= 0 && todayIndex <= 3) {
+        days[todayIndex] = progress.daySpend[todayIndex] + total >= STAMP_QUALIFYING_SPEND;
+      }
+      stampSnapshot = { days, unlocked: days.every(Boolean) };
+    }
+
+    // ---- 9. place it ----
+    const orderId = crypto.randomUUID();
+    const orderItems = toOrderItems(lines);
+    const { data, error } = await supabase.rpc("place_order", {
+      p_order_id: orderId,
+      p_user_id: userId,
+      p_member_name: userId ? memberName : null,
+      p_is_test: isTest,
+      p_items: orderItems,
+      p_total: total,
+      p_note: cleanedNote,
+      p_pickup_slot: slot.toISOString(),
+      p_payment_method: payment_method,
+      p_redeem_stamp: redeemStamp,
+      p_stamp_discount: stampDiscount,
+      p_stamp_snapshot: stampSnapshot,
+      p_slot_cap: menu.rules.pickup.perSlot,
+    });
+
+    if (error) {
+      const mapped = RPC_ERRORS[error.code ?? ""];
+      if (mapped) {
+        if (error.code === "LB010") console.error("[place-order] place_order rejected input", error);
+        return fail(mapped.status, mapped.code, mapped.error);
+      }
+      console.error("[place-order] place_order failed", error);
+      return fail(500, "server_error", "Could not place the order");
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row || !row.id) {
+      console.error("[place-order] place_order returned no row", data);
+      return fail(500, "server_error", "Could not place the order");
+    }
+
+    // ---- 10. done ----
+    return json(
+      {
+        ok: true,
+        id: row.id,
+        short_id: row.short_id,
+        total,
+        stamp_discount: stampDiscount,
+        items: orderItems,
+        payment_method,
+        balance_snapshot: row.balance_after ?? null,
+        stamp_snapshot: stampSnapshot,
+        member_name: userId ? memberName : null,
+        pickup_slot: slot.toISOString(),
+        is_test: isTest,
+      },
+      200
+    );
+  } catch (err) {
+    console.error("[place-order] unexpected error", err);
+    return fail(500, "server_error", "Could not place the order");
+  }
+});

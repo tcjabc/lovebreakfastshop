@@ -9,126 +9,6 @@ const SUPABASE_ANON_KEY = "sb_publishable_jy24Bn15qO8O2ZsWOBdyxw_W8bxBZ8L";
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Average minutes to prepare one item — used for pickup time estimate.
-// Adjust to match reality once you have real timing data.
-const AVG_MINUTES_PER_ITEM = 3;
-const QUEUE_BUFFER_MINUTES = 4; // slack per order already ahead in queue
-
-function makeTestShortId() {
-  // Test-mode orders (is_test=true, see isTesterMode() below) never go
-  // through the real daily counter — this old random letter+number
-  // scheme (e.g. "B482") is kept for them ONLY, now doubling as a
-  // built-in "this is a test order" marker: it looks nothing like a
-  // real order's plain zero-padded daily number, so staff can tell
-  // them apart at a glance without needing a separate flag on-screen.
-  return (
-    String.fromCharCode(65 + Math.floor(Math.random() * 26)) +
-    Math.floor(100 + Math.random() * 900)
-  );
-}
-
-// Atomically claims the next number in today's sequence via the
-// next_daily_order_number() Postgres function (see README.md/SCHEMA —
-// run once in the Supabase SQL editor, not version-controlled here,
-// same as reserve_pickup_slot()). The function does one INSERT ...
-// ON CONFLICT DO UPDATE ... RETURNING, so two orders landing at the
-// same instant can't ever be handed the same number — the DB, not
-// this client, is what makes it atomic.
-//
-// "Today" is the function's own now()-based Taipei calendar day, i.e.
-// purely when the order was actually placed — deliberately NOT the
-// order's pickup_slot day, so a late-night order for tomorrow's early
-// slots still gets today's next number rather than jumping ahead into
-// a day that hasn't started yet. Zero-padded to 3 digits ("007") so
-// every real order's id lines up visually on staff/index.html's cards; if a
-// single day ever exceeds 999 orders this naturally overflows to 4
-// digits rather than breaking.
-async function makeRealShortId() {
-  const { data, error } = await supabaseClient.rpc("next_daily_order_number");
-  if (error) {
-    // Extremely unlikely (the function is a single statement against a
-    // one-row table), but a real order must still get *some* id rather
-    // than fail checkout outright — falls back to the old random
-    // scheme, same as a test order, rather than throwing.
-    console.error("[Orders] next_daily_order_number failed — falling back to a random id", error);
-    return makeTestShortId();
-  }
-  return String(data).padStart(3, "0");
-}
-
-// userId comes from the current session's LINE login (see
-// syncMemberState()/loginWithLine() in app.js) — null for an anonymous
-// guest checkout, exactly as every order worked before Membership
-// existed. isTest comes from isTesterMode() below — true only for a
-// logged-in user flagged as a tester, so their orders land in
-// staff/index.html's Test Orders section instead of the live kitchen queue.
-//
-// id/paymentMethod/stampDiscount are optional: paymentMethod defaults
-// to 'cash_on_pickup' and stampDiscount to 0 (matching their own DB
-// defaults) when omitted, so existing callers don't need to change. id
-// is only ever passed for a stored-value order and/or a stamp-card
-// redemption — submitOrder() (app.js) generates it client-side and
-// calls spend-stored-value/redeem-stamp-drink against it *before*
-// calling this, so those calls' own records share the same id as this
-// order row; left unset (undefined), Postgres generates one via
-// orders.id's own default, exactly as before either feature existed.
-// stampDiscount is the amount (if any) a Weekday Stamp Card redemption
-// already took off `total` — recorded so the printed receipt (see
-// print.js) can show why the item lines don't sum to the total.
-// pickupSlot is the ISO timestamp already reserved via the
-// reserve_pickup_slot() RPC (see submitOrder() in app.js) *before*
-// this is ever called — insertOrder() itself never reserves anything,
-// just records which slot the caller already secured.
-// memberName/stampSnapshot/balanceSnapshot are a point-in-time capture
-// for the printed receipt (see print.js) — a member's display name,
-// their days/unlocked stamp progress, and their stored-value balance
-// as of this order (post-deduction if stored value paid for it,
-// otherwise whatever was already known at checkout) — never re-derived
-// later, so the receipt always reflects what was true at order time
-// even if the member's real progress/balance has since moved on.
-// All three stay null for a guest order.
-async function insertOrder({
-  items,
-  total,
-  note,
-  userId,
-  isTest,
-  id,
-  paymentMethod,
-  stampDiscount,
-  pickupSlot,
-  memberName,
-  stampSnapshot,
-  balanceSnapshot,
-}) {
-  const shortId = isTest ? makeTestShortId() : await makeRealShortId();
-  const row = {
-    short_id: shortId,
-    items,
-    total,
-    note: note || null,
-    status: "pending",
-    user_id: userId || null,
-    is_test: Boolean(isTest),
-    payment_method: paymentMethod || "cash_on_pickup",
-    stamp_discount: stampDiscount || 0,
-    pickup_slot: pickupSlot || null,
-    member_name: memberName || null,
-    stamp_snapshot: stampSnapshot || null,
-    balance_snapshot: balanceSnapshot == null ? null : balanceSnapshot,
-  };
-  if (id) row.id = id;
-
-  const { data, error } = await supabaseClient
-    .from("orders")
-    .insert([row])
-    .select()
-    .single();
-
-  if (error) throw error;
-  return data;
-}
-
 // Upsert-only member record, keyed to the LINE user id — insert on
 // first sight, otherwise refresh the display fields + last_seen_at
 // without touching created_at. Called once per successful login (see
@@ -149,25 +29,6 @@ async function upsertMember(profile) {
   if (error) {
     console.error("[Members] upsert failed", error);
   }
-}
-
-async function getQueueCount() {
-  const { count, error } = await supabaseClient
-    .from("orders")
-    .select("*", { count: "exact", head: true })
-    .in("status", ["pending", "preparing"]);
-
-  if (error) {
-    console.error("Queue count failed", error);
-    return 0;
-  }
-  return count || 0;
-}
-
-function estimateWaitMinutes(itemCount, queueAhead) {
-  const prepTime = itemCount * AVG_MINUTES_PER_ITEM;
-  const queueTime = queueAhead * QUEUE_BUFFER_MINUTES;
-  return Math.max(10, prepTime + queueTime); // floor of 10 min
 }
 
 // ============================================================
@@ -275,11 +136,14 @@ async function getMemberOrderHistory(userId, limit = 20) {
 // Its purpose now: once someone IS logged in, decide whether THEIR
 // orders get flagged is_test = true, so the shop owner's own testing
 // orders land in staff/index.html's separate Test Orders section instead of
-// the live kitchen queue/auto-print. If you're reading this because
-// you're wondering whether this is dead code left over from the old
-// gate — it isn't; it's called from syncLoggedInProfile() in app.js
-// on every login, and its result flows into insertOrder()'s isTest
-// param exactly like before, just no longer gating login itself.
+// the live kitchen queue/auto-print.
+//
+// NOTE: orders no longer use this result. Since checkout moved to the
+// place-order Edge Function, the SERVER decides is_test (it reads
+// feature_flags itself for the verified LINE user). This is still
+// called from syncLoggedInProfile() in app.js and stored as
+// currentMember.isTest, but nothing reads that for ordering any more —
+// safe to remove along with currentMember.isTest.
 //
 // Toggling someone's tester status is still a pure feature_flags row
 // update in Supabase (see README.md), never a code change.

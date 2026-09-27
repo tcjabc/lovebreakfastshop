@@ -963,6 +963,27 @@ body {
   background: white;
 }
 
+/* Neither rule below sets `display`, so the [hidden] attribute keeps
+   working on #pickup-slot-note (see CLAUDE.md's hidden/toggle note). */
+.pickup-slot-note {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-primary);
+}
+
+.note-count {
+  margin: 4px 0 0;
+  font-size: 12px;
+  text-align: right;
+  opacity: 0.6;
+}
+
+.note-count.over {
+  color: var(--color-primary);
+  opacity: 1;
+}
+
 .submit-btn {
   width: 100%;
   margin-top: 16px;
