@@ -8,10 +8,17 @@
 // invoked; that's been removed in favor of this file).
 //
 // wrangler.jsonc scopes `assets.run_worker_first` to ["/staff/*"], so
-// this script's fetch handler only ever runs for requests under
-// /staff — every other request (the customer ordering app: index.html,
-// app.js, menu.json, etc.) is served directly from the `assets` binding
-// with no Worker invocation at all, same as before this gate existed.
+// this script's fetch handler runs for requests under /staff, plus any
+// request that matches NO static file (404s, and /version.json below).
+// Every existing file (the customer ordering app: index.html, app.js,
+// menu.json, etc.) is served directly from the `assets` binding with no
+// Worker invocation at all.
+//
+// /version.json — the deploy marker both apps poll to reload themselves
+// after a deploy (see checkForAppUpdate() in app.js and staff.js). It's
+// the Worker version id from the CF_VERSION_METADATA binding
+// (wrangler.jsonc), which Cloudflare changes on EVERY `wrangler deploy`
+// automatically — there's no file to bump by hand. Public, no-store.
 //
 // PIN gate for the staff dashboard (/staff/*): see gateStaffRequest()
 // below. Requires two secrets — set via `wrangler secret put
@@ -253,6 +260,17 @@ async function gateStaffRequest(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/version.json") {
+      const meta = env.CF_VERSION_METADATA;
+      return new Response(JSON.stringify({ version: meta ? meta.id : null }), {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     const isStaffPath = url.pathname === "/staff" || url.pathname.startsWith("/staff/");
 
     if (isStaffPath) {

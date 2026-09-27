@@ -15,7 +15,7 @@
 <meta name="theme-color" content="#fbefe6" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20260927-2" />
+<link rel="stylesheet" href="style.css?v=20260928-3" />
 </head>
 <body>
 
@@ -224,6 +224,15 @@
     <!-- maxlength matches place-order's NOTE_MAX_CHARS (100). -->
     <input id="order-note" class="note-input" type="text" maxlength="100" placeholder="例如：不要香菜" />
     <p id="order-note-count" class="note-count" aria-live="polite">0/100</p>
+    <!-- Shown only after a network error on 送出訂單 (the response never
+         arrived, so the order may or may not have been placed). 重試
+         reuses the same client_order_id, so place-order returns the
+         existing order instead of placing a second one — see
+         checkoutOrderId() in app.js. -->
+    <div id="order-network-error" class="order-network-error" hidden>
+      <p>網路連線不穩，無法確認訂單是否已送出。請按「重試」，不會重複下單。</p>
+      <button id="order-retry-btn" class="submit-btn" type="button">重試</button>
+    </div>
     <button id="submit-order" class="submit-btn">送出訂單</button>
     <button id="close-sheet" class="close-sheet-btn">繼續選購</button>
   </section>
@@ -342,6 +351,6 @@
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
   <script src="supabase-config.js?v=20260928-2"></script>
-  <script src="app.js?v=20260928-2"></script>
+  <script src="app.js?v=20260928-3"></script>
 </body>
 </html>

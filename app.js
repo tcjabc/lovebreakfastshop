@@ -706,6 +706,7 @@ function closeOptionsSheet() {
   document.getElementById("options-sheet").hidden = true;
   activeOptionsItem = null;
   currentSelection = null;
+  maybeReloadForUpdate();
 }
 
 function confirmAddOptions() {
@@ -1024,29 +1025,48 @@ async function callEdgeFunction(name, payload) {
 // check and displayed option both reflect what would really be
 // charged, not the pre-discount cart total. (Display only — place-order
 // re-checks the balance and records balance_snapshot itself.)
-async function renderPaymentMethodSection(amountDue) {
-  const section = document.getElementById("payment-method-section");
-  document.getElementById("payment-method-cash").checked = true;
-  section.hidden = true;
+// The member's stored-value balance as fetched when the checkout sheet
+// opened (loadSheetStoredValueBalance()), reused by every re-render of
+// the payment section while the sheet stays open (cart edits, stamp
+// changes) — no extra network call per ✕. null = guest, no balance, or
+// the lookup failed.
+let sheetStoredValueBalance = null;
 
+async function loadSheetStoredValueBalance() {
+  sheetStoredValueBalance = null;
   if (!currentMember.userId) return;
-  if (amountDue <= 0) return;
-
-  let idToken;
-  try {
-    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
-  } catch (err) {
-    idToken = null;
-  }
+  const idToken = currentIdToken();
   if (!idToken) return;
-
   const result = await callEdgeFunction("get-stored-value-balance", { id_token: idToken });
-  if (!result.ok) return; // unreachable — no option shown
+  if (result.ok) sheetStoredValueBalance = result.balance;
+}
 
-  if (result.balance < amountDue) return; // insufficient — no option shown at all, not a disabled one
+// Synchronous: renders from sheetStoredValueBalance for the CURRENT
+// amount due, so it updates as the cart total changes.
+//   * hidden — guests, balance unavailable, balance 0 (get-stored-value-
+//     balance reports "never topped up" as 0, so "no account" and "an
+//     empty account" can't be told apart), or nothing to pay;
+//   * enabled — balance covers the amount due;
+//   * shown but DISABLED — balance too low: 儲值支付（餘額 NT$40，不足）.
+// 現場付款 stays the default (openSheet() selects it); a chosen 儲值支付 is
+// kept across re-renders unless it just became insufficient.
+function renderPaymentMethodSection(amountDue) {
+  const section = document.getElementById("payment-method-section");
+  const cash = document.getElementById("payment-method-cash");
+  const stored = document.getElementById("payment-method-stored-value");
+  const text = document.getElementById("payment-method-stored-value-text");
+  const balance = sheetStoredValueBalance;
 
-  document.getElementById("payment-method-stored-value-text").textContent =
-    `使用儲值支付（餘額：NT$${result.balance}）`;
+  if (!currentMember.userId || balance == null || balance <= 0 || amountDue <= 0) {
+    cash.checked = true;
+    section.hidden = true;
+    return;
+  }
+
+  const enough = balance >= amountDue;
+  stored.disabled = !enough;
+  if (!enough && stored.checked) cash.checked = true;
+  text.textContent = enough ? `儲值支付（餘額 NT$${balance}）` : `儲值支付（餘額 NT$${balance}，不足）`;
   section.hidden = false;
 }
 
@@ -1103,11 +1123,14 @@ async function renderSheetCart() {
 
   const amountDue = cartTotal() - (stampDiscount ? stampDiscount.discount : 0);
   document.getElementById("sheet-total").textContent = `NT$${amountDue}`;
-  await renderPaymentMethodSection(amountDue);
+  renderPaymentMethodSection(amountDue);
 }
 
 async function openSheet() {
   if (Object.keys(cart).length === 0) return;
+  document.getElementById("payment-method-cash").checked = true; // 現場付款 is always the default on open
+  document.getElementById("order-network-error").hidden = true;
+  await loadSheetStoredValueBalance();
   await renderSheetCart();
   document.getElementById("pickup-slot-note").hidden = true;
   await renderPickupSlotSection();
@@ -1121,6 +1144,7 @@ function closeSheet() {
   stopPickupSlotRefresh();
   document.getElementById("sheet-backdrop").hidden = true;
   document.getElementById("checkout-sheet").hidden = true;
+  maybeReloadForUpdate(); // a deploy waiting for checkout to finish can apply now
 }
 
 // Live "n/100" under the note box. Counted in characters (code points),
@@ -2169,15 +2193,14 @@ async function submitOrder() {
   const lineKeys = Object.keys(cart);
   const note = document.getElementById("order-note").value.trim();
 
-  // Only ever "stored_value" if the section is actually visible — a
-  // guest or insufficient-balance visitor can never end up on it no
-  // matter what a stale radio state might say, since they were never
-  // shown the choice in the first place (see renderPaymentMethodSection()).
+  // Only ever "stored_value" if the option is visible AND enabled — a
+  // guest, or a member whose balance doesn't cover the total (option
+  // shown disabled), can never end up on it whatever a stale radio state
+  // says (see renderPaymentMethodSection()). The server re-checks anyway.
   const paymentSection = document.getElementById("payment-method-section");
+  const storedValueRadio = document.getElementById("payment-method-stored-value");
   const paymentMethod =
-    !paymentSection.hidden && document.getElementById("payment-method-stored-value").checked
-      ? "stored_value"
-      : "cash_on_pickup";
+    !paymentSection.hidden && !storedValueRadio.disabled && storedValueRadio.checked ? "stored_value" : "cash_on_pickup";
 
   // ONE request: place-order prices every line from menu.json itself,
   // verifies the LINE login, decides the stamp discount, validates the
@@ -2193,6 +2216,7 @@ async function submitOrder() {
     pickup_slot: selectedSlotIso,
     payment_method: paymentMethod,
     redeem_stamp: Boolean(computeStampDiscount()),
+    client_order_id: checkoutOrderId(),
   };
   const idToken = currentIdToken();
   if (idToken) request.id_token = idToken;
@@ -2201,6 +2225,7 @@ async function submitOrder() {
   submitBtn.disabled = true;
   submitBtn.textContent = "送出中…";
   orderSubmitting = true;
+  document.getElementById("order-network-error").hidden = true;
 
   try {
     const saved = await callEdgeFunction("place-order", request);
@@ -2208,6 +2233,7 @@ async function submitOrder() {
       await handlePlaceOrderFailure(saved, lineKeys);
       return;
     }
+    checkoutAttempt = null; // this checkout is done — the next one gets a new id
 
     // From here on the order exists. Everything shown or sent below
     // comes from the response (server-priced items/total, the slot it
@@ -2243,6 +2269,28 @@ async function submitOrder() {
   }
 }
 
+// ---- Idempotency key for place-order ----
+// One uuid per checkout, sent as client_order_id and REUSED for every
+// retry of that same checkout — including after a network error where
+// the first request may actually have gone through. place-order then
+// returns the already-placed order instead of placing (and charging) a
+// second one. A new id only when the cart changes (a different
+// checkout) or after an order succeeds (checkoutAttempt reset above).
+let checkoutAttempt = null; // { id, cartSignature }
+
+function cartSignature() {
+  // Line keys encode item + selection (see lineId()); qty completes it.
+  return JSON.stringify(Object.keys(cart).sort().map((key) => [key, cart[key].qty]));
+}
+
+function checkoutOrderId() {
+  const signature = cartSignature();
+  if (!checkoutAttempt || checkoutAttempt.cartSignature !== signature) {
+    checkoutAttempt = { id: crypto.randomUUID(), cartSignature: signature };
+  }
+  return checkoutAttempt.id;
+}
+
 // The current LIFF ID token, or null (guest, or LIFF unavailable).
 function currentIdToken() {
   try {
@@ -2276,7 +2324,8 @@ function applyOrderResultToMemberWidgets(saved) {
 // place-order is all-or-nothing: on ANY error response nothing was
 // reserved, charged, redeemed or saved. Every message below says so —
 // except "network", where the request may have reached the server and
-// succeeded even though no response came back.
+// succeeded even though no response came back; there the sheet offers
+// 重試, which is safe because it reuses the same client_order_id.
 const ORDER_NOT_CHARGED = "訂單未送出，未扣款。";
 
 // Request/cart shape problems — the cart no longer matches the menu or
@@ -2326,8 +2375,9 @@ async function handlePlaceOrderFailure(result, lineKeys) {
     case "insufficient_funds":
       alert(`儲值餘額不足，請改用現場付款。${ORDER_NOT_CHARGED}`);
       document.getElementById("payment-method-cash").checked = true;
-      document.getElementById("payment-method-section").hidden = true;
       loadStoredValueBalance(); // refresh the header readout
+      await loadSheetStoredValueBalance(); // …and the sheet's option, now shown disabled (不足)
+      await renderSheetCart();
       return;
 
     case "already_redeemed":
@@ -2369,9 +2419,11 @@ async function handlePlaceOrderFailure(result, lineKeys) {
       return;
 
     case "network":
-      // The ONLY case where we can't promise nothing happened: the
-      // request may have been processed before the connection dropped.
-      alert("網路連線不穩，無法確認訂單是否已送出。為避免重複下單，會員請先查看「訂單紀錄」，或直接聯繫店家確認。");
+      // The request may have been processed before the connection
+      // dropped — but a retry is SAFE: it reuses this checkout's
+      // client_order_id (see checkoutOrderId()), so place-order returns
+      // the already-placed order instead of placing a second one.
+      document.getElementById("order-network-error").hidden = false;
       return;
   }
 
@@ -2423,7 +2475,9 @@ function wireUpUI() {
   document.getElementById("confirm-close").addEventListener("click", () => {
     document.getElementById("confirm-screen").hidden = true;
     if (liff.isInClient()) liff.closeWindow();
+    else maybeReloadForUpdate();
   });
+  document.getElementById("order-retry-btn").addEventListener("click", submitOrder); // same cart → same client_order_id
 
   document.getElementById("options-backdrop").addEventListener("click", closeOptionsSheet);
   document.getElementById("options-cancel").addEventListener("click", closeOptionsSheet);
@@ -2464,6 +2518,116 @@ function wireUpUI() {
   document.getElementById("transactions-backdrop").addEventListener("click", closeTransactionsSheet);
 }
 
+// ------------------------------------------------------------
+// Self-update after a deploy. The app can sit open for days (installed
+// to the home screen, or a long-lived LINE window), still running the
+// JS it loaded — so it polls /version.json (the Worker's deploy id,
+// which changes on EVERY `wrangler deploy`, see worker.js) every few
+// minutes and whenever the page becomes visible again. When it
+// changes, the page reloads — but only at a safe moment: never while
+// the checkout sheet, options sheet, login-or-guest dialog or
+// confirmation screen is open, or while an order is being submitted.
+// A pending update is applied as soon as those close. The cart and note
+// are saved first and restored after the reload (same mechanism as
+// the LINE login redirect).
+//
+// /version.json doesn't exist under `npx serve` (no Worker locally), so
+// local dev simply never reloads.
+// ------------------------------------------------------------
+const APP_UPDATE_CHECK_MS = 5 * 60 * 1000;
+let appVersionBaseline = null; // the deploy id this page loaded under
+let appUpdatePending = false;
+
+async function fetchAppVersion() {
+  try {
+    const res = await fetch("/version.json", { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.version === "string" && data.version ? data.version : null;
+  } catch {
+    return null;
+  }
+}
+
+async function checkForAppUpdate() {
+  if (appUpdatePending) return maybeReloadForUpdate();
+  const version = await fetchAppVersion();
+  if (!version) return;
+  if (appVersionBaseline === null) {
+    appVersionBaseline = version;
+    return;
+  }
+  if (version !== appVersionBaseline) {
+    console.log(`[Update] new deploy ${version} (loaded under ${appVersionBaseline}) — will reload when safe`);
+    appUpdatePending = true;
+    maybeReloadForUpdate();
+  }
+}
+
+function isSafeToReloadForUpdate() {
+  const open = (id) => !document.getElementById(id).hidden;
+  return (
+    !orderSubmitting &&
+    !open("checkout-sheet") &&
+    !open("options-sheet") &&
+    !open("checkout-auth-dialog") &&
+    !open("confirm-screen")
+  );
+}
+
+function maybeReloadForUpdate() {
+  if (!appUpdatePending || !isSafeToReloadForUpdate()) return;
+  persistCartForLoginRedirect(); // cart + note survive the reload
+  location.reload();
+}
+
+// ------------------------------------------------------------
+// Header stamp circles across midnight. stampProgress is fetched at
+// login; a page left open past midnight (Asia/Taipei) — or past Sunday
+// into a new stamp week — would keep showing yesterday's/last week's
+// circles. Re-fetch when the Taipei date changes, and whenever the page
+// becomes visible again (throttled).
+// ------------------------------------------------------------
+const STAMP_VISIBLE_REFRESH_MIN_MS = 60 * 1000;
+let stampDateKey = null;
+let stampLastRefreshAt = 0;
+
+function taipeiDateKey(now = Date.now()) {
+  return new Date(now + PICKUP_TAIPEI_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+async function refreshStampProgressIfMember(reason) {
+  if (!currentMember.userId) return;
+  stampLastRefreshAt = Date.now();
+  console.log(`[Stamp] refreshing progress (${reason})`);
+  await loadStampProgress();
+}
+
+function checkStampDateChange() {
+  const key = taipeiDateKey();
+  if (stampDateKey !== null && key !== stampDateKey) {
+    stampDateKey = key;
+    refreshStampProgressIfMember("Taipei date changed");
+    return;
+  }
+  stampDateKey = key;
+}
+
+function startBackgroundChecks() {
+  stampDateKey = taipeiDateKey();
+  checkForAppUpdate(); // records the baseline deploy id
+  setInterval(checkForAppUpdate, APP_UPDATE_CHECK_MS);
+  setInterval(checkStampDateChange, 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    checkForAppUpdate();
+    checkStampDateChange();
+    if (Date.now() - stampLastRefreshAt >= STAMP_VISIBLE_REFRESH_MIN_MS) {
+      refreshStampProgressIfMember("page visible again");
+    }
+  });
+}
+
 async function init() {
   try {
     await loadMenu();
@@ -2492,6 +2656,7 @@ async function init() {
   }
 
   await syncMemberState(); // silent check only — see loginWithLine() for the only place login is actually triggered
+  startBackgroundChecks(); // deploy-marker polling + stamp-circle refresh across midnight
 }
 
 init();

@@ -91,6 +91,28 @@ discussion" below.
 
 Every file in the repo root is public unless listed in .assetsignore — check any new file or folder against it; verify with `WRANGLER_LOG=debug wrangler deploy --dry-run`.
 
+**Deploy marker / self-update (`/version.json`).** Both apps (customer
+`app.js`, staff `staff.js`) can stay open for days — installed to the
+home screen, or a long-lived LINE window / shop tablet — so each polls
+`/version.json` every 5 minutes and whenever the page becomes visible,
+and reloads itself when the value changes (customer: never with the
+checkout/options sheet, login dialog or confirmation screen open, or
+mid-submit — the cart and note are restored after the reload; staff:
+only between polls, never during a print job or with the 會員儲值 panel
+open — the staff session and PIN cookie survive the reload).
+**Nothing needs bumping by hand:** `/version.json` is not a file — no
+static asset matches it, so the request falls through to `worker.js`,
+which returns the Worker version id from the `CF_VERSION_METADATA`
+binding (`version_metadata` in `wrangler.jsonc`). Cloudflare issues a
+new version id on EVERY `wrangler deploy`, so every deploy (even one
+that only changes static files) makes open apps reload at their next
+safe moment. Never add a real `version.json` file to the repo root — it
+would shadow the Worker's answer and freeze the marker. Under
+`npx serve` there is no Worker, `/version.json` 404s, and the apps just
+never reload (fine for local dev). The `?v=` cache-busting on script/
+style tags is still needed on top of this, so the reload actually
+fetches the new files.
+
 ## Staff dashboard PIN gate
 
 `/staff/*` (the whole subtree — `staff/index.html` and its sibling

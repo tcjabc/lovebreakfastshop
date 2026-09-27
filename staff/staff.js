@@ -179,6 +179,65 @@ const printFailed = new Set();
 // with printed still false the next poll would print it again, forever.
 let autoPrintHalted = false;
 
+// ------------------------------------------------------------
+// Self-update after a deploy (same idea as app.js). The dashboard runs
+// for days on the shop tablet, often installed as its own app, so it
+// polls /version.json — the Worker's deploy id, which changes on every
+// `wrangler deploy` (see worker.js) — every 5 minutes and whenever the
+// page becomes visible again, and reloads when it changes. Only at a
+// safe moment: between polls (refreshesInFlight === 0), with no print
+// job running (printJobsInFlight / printingInFlight), the 會員儲值 panel
+// closed, and — on the sign-in screen — nothing typed in yet. The
+// reload keeps the staff Supabase session (localStorage, "lb-staff-auth")
+// and the Worker's PIN cookie (staff_session, 12h), so staff don't have
+// to sign in or re-enter the PIN.
+// ------------------------------------------------------------
+const APP_UPDATE_CHECK_MS = 5 * 60 * 1000;
+let appVersionBaseline = null;
+let appUpdatePending = false;
+let printJobsInFlight = 0; // manual 列印, auto-print and 測試列印 all count
+
+async function fetchAppVersion() {
+  try {
+    const res = await fetch("/version.json", { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.version === "string" && data.version ? data.version : null;
+  } catch {
+    return null;
+  }
+}
+
+async function checkForAppUpdate() {
+  if (appUpdatePending) return maybeReloadForUpdate();
+  const version = await fetchAppVersion();
+  if (!version) return;
+  if (appVersionBaseline === null) {
+    appVersionBaseline = version;
+    return;
+  }
+  if (version !== appVersionBaseline) {
+    console.log(`[Update] new deploy ${version} (loaded under ${appVersionBaseline}) — will reload when safe`);
+    appUpdatePending = true;
+    maybeReloadForUpdate();
+  }
+}
+
+function isSafeToReloadForUpdate() {
+  if (refreshesInFlight > 0 || printJobsInFlight > 0 || printingInFlight.size > 0) return false;
+  if (!document.getElementById("sv-panel").hidden) return false; // a top-up may be half-typed
+  if (!document.getElementById("staff-login").hidden) {
+    const typed = document.getElementById("staff-login-email").value || document.getElementById("staff-login-password").value;
+    if (typed) return false;
+  }
+  return true;
+}
+
+function maybeReloadForUpdate() {
+  if (!appUpdatePending || !isSafeToReloadForUpdate()) return;
+  location.reload();
+}
+
 // null on error (as opposed to [] = genuinely no open orders), so a
 // failed fetch never wipes the columns and looks like an empty queue.
 async function fetchOrders() {
@@ -352,6 +411,7 @@ function haltAutoPrint(order) {
 // either transferOut fails — so markPrinted() below only ever fires
 // once both documents have gone out successfully, not after just one.
 async function handlePrint(order, { silent = false } = {}) {
+  printJobsInFlight++; // a deploy self-update must never interrupt a print
   try {
     await ThermalPrinter.printOrder(receiptDataFor(order));
     if (!(await markPrinted(order))) {
@@ -366,6 +426,9 @@ async function handlePrint(order, { silent = false } = {}) {
       alert("列印失敗，請確認印表機已連接");
     }
     return false;
+  } finally {
+    printJobsInFlight--;
+    maybeReloadForUpdate();
   }
 }
 
@@ -496,6 +559,7 @@ async function handleTestLabel() {
   showReceiptPreview(data, { kitchenTicket: false }); // show what's being printed
   const btn = document.getElementById("test-label-btn");
   btn.disabled = true;
+  printJobsInFlight++;
   try {
     await ThermalPrinter.printTestLabel(data);
   } catch (err) {
@@ -503,6 +567,8 @@ async function handleTestLabel() {
     alert("測試列印失敗，請確認印表機已連接");
   } finally {
     btn.disabled = false;
+    printJobsInFlight--;
+    maybeReloadForUpdate();
   }
 }
 
@@ -511,7 +577,21 @@ function closePreview() {
   document.getElementById("receipt-preview").hidden = true;
 }
 
+// A poll tick. Wrapped so the deploy self-update (maybeReloadForUpdate())
+// only ever happens BETWEEN polls: refreshesInFlight counts overlapping
+// calls (updateStatus()/auto-print also call refresh() directly).
+let refreshesInFlight = 0;
 async function refresh() {
+  refreshesInFlight++;
+  try {
+    await refreshOnce();
+  } finally {
+    refreshesInFlight--;
+    maybeReloadForUpdate();
+  }
+}
+
+async function refreshOnce() {
   if (!(await ensureStaffSession())) return; // signed out / refresh failed → sign-in screen, polling stopped
   const orders = await fetchOrders();
   if (orders === null) return; // fetch failed — keep the last good render rather than showing an empty queue
@@ -668,6 +748,7 @@ function closeStoredValuePanel() {
   document.getElementById("sv-backdrop").hidden = true;
   document.getElementById("sv-panel").hidden = true;
   resetStoredValueState();
+  maybeReloadForUpdate(); // a deploy waiting for the top-up panel to close can apply now
 }
 
 function formatLastSeen(isoString) {
@@ -906,4 +987,12 @@ loadShopInfo().then(async () => {
   } else {
     showLogin();
   }
+  // Deploy self-update: baseline now, then every 5 min and on becoming
+  // visible. While polling, a pending update is applied at the end of
+  // the next poll tick (see refresh()); on the sign-in screen, right away.
+  checkForAppUpdate();
+  setInterval(checkForAppUpdate, APP_UPDATE_CHECK_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkForAppUpdate();
+  });
 });

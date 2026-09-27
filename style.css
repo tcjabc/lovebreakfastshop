@@ -1216,3 +1216,28 @@ body {
 .confirm-screen .submit-btn {
   max-width: 240px;
 }
+
+/* Network-error box with 重試 in the checkout sheet. No `display` rule,
+   so [hidden] works on it (see CLAUDE.md's hidden/toggle note). */
+.order-network-error {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--color-bg-alt);
+  font-size: 14px;
+}
+
+.order-network-error p {
+  margin: 0;
+}
+
+.order-network-error .submit-btn {
+  margin-top: 10px;
+}
+
+/* 儲值支付 shown but not selectable (balance below the total). */
+.payment-method-row input:disabled,
+.payment-method-row input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

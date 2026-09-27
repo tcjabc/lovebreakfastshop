@@ -10,5 +10,11 @@
     // from `assets` with no Worker invocation, same as before this
     // gate existed.
     "run_worker_first": ["/staff/*"]
+  },
+  // Exposes this deployment's version id to worker.js, which serves it
+  // at /version.json — the marker both apps poll to reload after a
+  // deploy. Changes automatically on every `wrangler deploy`.
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
   }
 }
