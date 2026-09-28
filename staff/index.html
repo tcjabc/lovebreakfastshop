@@ -15,7 +15,7 @@
 <meta name="theme-color" content="#fbefe6" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="staff-style.css?v=20260928-3" />
+<link rel="stylesheet" href="staff-style.css?v=20260929" />
 </head>
 <body>
 
@@ -52,6 +52,15 @@
 
   <!-- Shown if marking an order printed ever fails (e.g. lost
        permissions): auto-print stops so nothing prints in a loop. -->
+  <!-- Shown when an auto-print fails (printer off, out of paper, USB,
+       not connected): the queue pauses instead of failing every other
+       order the same way. 重新開始自動列印 retries that order and carries
+       on with the rest. See pauseAutoPrint() in staff.js. -->
+  <div id="autoprint-paused-banner" class="staff-banner" hidden>
+    自動列印已暫停：訂單 <span id="autoprint-paused-order"></span> 列印失敗。請確認印表機已開啟、有紙並已連接（必要時按「連接印表機」），再按
+    <button id="autoprint-resume-btn" class="staff-banner-btn" type="button">重新開始自動列印</button>
+  </div>
+
   <div id="autoprint-halted-banner" class="staff-banner" hidden>
     自動列印已暫停：訂單已列印但無法標記為「已列印」。請重新整理頁面，若仍發生請重新登入。
   </div>
@@ -183,7 +192,7 @@
   <script src="../supabase-config.js?v=20260928-2"></script>
   <!-- receipt-logo.js must load before print.js (it defines window.RECEIPT_LOGO). If it fails to load, labels print without the logo. -->
   <script src="../receipt-logo.js?v=20260928"></script>
-  <script src="../print.js?v=20260928-2"></script>
-  <script src="staff.js?v=20260928-4"></script>
+  <script src="../print.js?v=20260929"></script>
+  <script src="staff.js?v=20260929"></script>
 </body>
 </html>

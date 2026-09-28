@@ -168,10 +168,9 @@ async function loadShopInfo() {
 //   - printingInFlight: guards against a slow print still running
 //     when the next poll tick fires, before its printed=true update
 //     has landed in Supabase.
-//   - printFailed: once an order's auto-print attempt fails, stop
-//     retrying it automatically every poll tick (which would hammer a
-//     disconnected/broken printer) — staff retry via the manual Print
-//     button instead, which isn't gated by this set.
+//   - printFailed: orders whose auto-print failed; the queue is paused
+//     (see pauseAutoPrint()) until 重新開始自動列印 clears this set and
+//     retries them. The manual Print button isn't gated by it.
 const printingInFlight = new Set();
 const printFailed = new Set();
 // Set once marking an order printed fails. Auto-print then stops for the
@@ -186,7 +185,8 @@ let autoPrintHalted = false;
 // `wrangler deploy` (see worker.js) — every 5 minutes and whenever the
 // page becomes visible again, and reloads when it changes. Only at a
 // safe moment: between polls (refreshesInFlight === 0), with no print
-// job running (printJobsInFlight / printingInFlight), the 會員儲值 panel
+// job running (activePrintJobs / printingInFlight) and the auto-print
+// queue idle, the 會員儲值 panel
 // closed, and — on the sign-in screen — nothing typed in yet. The
 // reload keeps the staff Supabase session (localStorage, "lb-staff-auth")
 // and the Worker's PIN cookie (staff_session, 12h), so staff don't have
@@ -195,7 +195,36 @@ let autoPrintHalted = false;
 const APP_UPDATE_CHECK_MS = 5 * 60 * 1000;
 let appVersionBaseline = null;
 let appUpdatePending = false;
-let printJobsInFlight = 0; // manual 列印, auto-print and 測試列印 all count
+// Print jobs in progress (manual 列印, auto-print and 測試列印 all count),
+// with their start time. print.js times out any single USB send after
+// 20s, so a job always ends — but if one ever doesn't, the self-update
+// must not wait forever: a job older than PRINT_JOB_STUCK_MS is logged
+// and dropped from this list.
+const PRINT_JOB_STUCK_MS = 2 * 60 * 1000;
+const activePrintJobs = new Map(); // jobId -> { label, startedAt }
+let nextPrintJobId = 1;
+
+function beginPrintJob(label) {
+  const id = nextPrintJobId++;
+  activePrintJobs.set(id, { label, startedAt: Date.now() });
+  return id;
+}
+
+function endPrintJob(id) {
+  activePrintJobs.delete(id);
+}
+
+function printJobsRunning() {
+  const now = Date.now();
+  for (const [id, job] of activePrintJobs) {
+    if (now - job.startedAt > PRINT_JOB_STUCK_MS) {
+      console.error(`[Print] job "${job.label}" stuck for ${Math.round((now - job.startedAt) / 1000)}s — clearing it so updates aren't blocked`);
+      activePrintJobs.delete(id);
+    }
+  }
+  if (activePrintJobs.size === 0 && printingInFlight.size > 0 && !autoPrintRunning) printingInFlight.clear(); // orphaned marker
+  return activePrintJobs.size > 0;
+}
 
 async function fetchAppVersion() {
   try {
@@ -224,7 +253,7 @@ async function checkForAppUpdate() {
 }
 
 function isSafeToReloadForUpdate() {
-  if (refreshesInFlight > 0 || printJobsInFlight > 0 || printingInFlight.size > 0) return false;
+  if (refreshesInFlight > 0 || printJobsRunning() || autoPrintRunning) return false;
   if (!document.getElementById("sv-panel").hidden) return false; // a top-up may be half-typed
   if (!document.getElementById("staff-login").hidden) {
     const typed = document.getElementById("staff-login-email").value || document.getElementById("staff-login-password").value;
@@ -411,7 +440,7 @@ function haltAutoPrint(order) {
 // either transferOut fails — so markPrinted() below only ever fires
 // once both documents have gone out successfully, not after just one.
 async function handlePrint(order, { silent = false } = {}) {
-  printJobsInFlight++; // a deploy self-update must never interrupt a print
+  const jobId = beginPrintJob(`order #${order.short_id}`); // a deploy self-update must never interrupt a print
   try {
     await ThermalPrinter.printOrder(receiptDataFor(order));
     if (!(await markPrinted(order))) {
@@ -427,40 +456,102 @@ async function handlePrint(order, { silent = false } = {}) {
     }
     return false;
   } finally {
-    printJobsInFlight--;
+    endPrintJob(jobId);
     maybeReloadForUpdate();
   }
 }
 
-// Auto-print: called every refresh() with the latest orders. For each
-// pending order not yet printed (and not already mid-print / already
-// failed this session), silently reconnects to the printer via
-// ThermalPrinter's getDevices()-based path (see print.js) and prints
-// it through the exact same handlePrint() the manual button uses.
+// ------------------------------------------------------------
+// Auto-print QUEUE — one order at a time, in pickup order.
+//
+// refresh() hands every poll's live orders to autoPrintPendingOrders(),
+// which only refreshes the candidate list and makes sure ONE queue
+// runner is going. The runner prints the next waiting order, waits for
+// it to finish (print.js also serialises every printer job behind one
+// lock), marks it printed, then takes the next — so 4 waiting orders
+// print back to back, and an order that arrives mid-queue (picked up by
+// a later poll) is simply printed after them.
+//
+// Order: earliest pickup slot first, then oldest order first (orders
+// without a slot last).
+//
+// A FAILED PRINT PAUSES the queue — it does not skip ahead. A print
+// failure is almost always the printer itself (off, out of paper, USB
+// cable, lost permission), so carrying on would just fail every
+// remaining order the same way, one after another. Instead: the order
+// gets its ⚠️, the red paused banner explains, and 重新開始自動列印
+// (after fixing the printer / tapping 連接印表機) retries it and carries
+// on. A failed *printed=true* write is the separate, stronger
+// haltAutoPrint() below (needs a reload: permissions/session problem).
+// ------------------------------------------------------------
+let autoPrintCandidates = [];           // latest poll's unprinted pending live orders
+let autoPrintRunning = false;
+let autoPrintPaused = false;
+const printedThisSession = new Set();   // printed + marked, but the poll may not reflect it yet
+
+function autoPrintOrder(a, b) {
+  const slotA = a.pickup_slot ? Date.parse(a.pickup_slot) : Infinity;
+  const slotB = b.pickup_slot ? Date.parse(b.pickup_slot) : Infinity;
+  if (slotA !== slotB) return slotA - slotB;
+  return Date.parse(a.created_at) - Date.parse(b.created_at);
+}
+
 function autoPrintPendingOrders(orders) {
-  if (autoPrintHalted) return; // see haltAutoPrint()
-  orders
-    .filter(
-      (order) =>
-        order.status === "pending" &&
-        !order.printed &&
-        !printingInFlight.has(order.id) &&
-        !printFailed.has(order.id)
-    )
-    .forEach(async (order) => {
+  autoPrintCandidates = orders.filter((o) => o.status === "pending" && !o.printed).sort(autoPrintOrder);
+  if (!autoPrintRunning) runAutoPrintQueue();
+}
+
+function nextAutoPrintOrder() {
+  return autoPrintCandidates.find(
+    (o) => !printedThisSession.has(o.id) && !printFailed.has(o.id) && !printingInFlight.has(o.id)
+  );
+}
+
+async function runAutoPrintQueue() {
+  if (autoPrintRunning) return;
+  autoPrintRunning = true;
+  try {
+    for (;;) {
+      if (autoPrintHalted || autoPrintPaused) break;
+      const order = nextAutoPrintOrder();
+      if (!order) break;
+
       printingInFlight.add(order.id);
-      console.log(`[AutoPrint] new unprinted pending order detected: #${order.short_id}`);
-      console.log(`[AutoPrint] calling handlePrint for #${order.short_id}`);
+      console.log(`[AutoPrint] printing #${order.short_id} (${autoPrintCandidates.length} unprinted in the last poll)`);
       const ok = await handlePrint(order, { silent: true });
-      if (ok) {
-        console.log(`[AutoPrint] #${order.short_id} printed successfully, marked printed=true`);
-      } else {
-        console.error(`[AutoPrint] #${order.short_id} failed to print — will not auto-retry this session`);
-        printFailed.add(order.id);
-      }
       printingInFlight.delete(order.id);
-      refresh(); // reflect the printed order / warning icon right away instead of waiting for the next poll tick
-    });
+
+      if (ok) {
+        printedThisSession.add(order.id);
+        console.log(`[AutoPrint] #${order.short_id} printed and marked printed=true`);
+      } else if (!autoPrintHalted) {
+        // handlePrint() returned false because the PRINT failed (a failed
+        // printed=true write halts instead — see haltAutoPrint()).
+        printFailed.add(order.id);
+        pauseAutoPrint(order);
+      }
+      refresh(); // show the ✓/⚠️ right away instead of waiting for the next poll tick
+    }
+  } finally {
+    autoPrintRunning = false;
+    maybeReloadForUpdate(); // a deploy waiting for the queue to drain can apply now
+  }
+}
+
+function pauseAutoPrint(order) {
+  autoPrintPaused = true;
+  const banner = document.getElementById("autoprint-paused-banner");
+  document.getElementById("autoprint-paused-order").textContent = `#${order.short_id}`;
+  banner.hidden = false;
+  console.error(`[AutoPrint] #${order.short_id} failed to print — auto-print paused until 重新開始自動列印`);
+}
+
+// 重新開始自動列印: retry the failed order(s) and carry on with the queue.
+function resumeAutoPrint() {
+  autoPrintPaused = false;
+  printFailed.clear();
+  document.getElementById("autoprint-paused-banner").hidden = true;
+  refresh(); // re-reads the queue; the runner starts from the oldest unprinted order
 }
 
 // Renders the exact same {text, align, bold, size} lines print.js
@@ -559,7 +650,7 @@ async function handleTestLabel() {
   showReceiptPreview(data, { kitchenTicket: false }); // show what's being printed
   const btn = document.getElementById("test-label-btn");
   btn.disabled = true;
-  printJobsInFlight++;
+  const jobId = beginPrintJob("test label");
   try {
     await ThermalPrinter.printTestLabel(data);
   } catch (err) {
@@ -567,7 +658,7 @@ async function handleTestLabel() {
     alert("測試列印失敗，請確認印表機已連接");
   } finally {
     btn.disabled = false;
-    printJobsInFlight--;
+    endPrintJob(jobId);
     maybeReloadForUpdate();
   }
 }
@@ -628,6 +719,7 @@ async function refreshOnce() {
 }
 
 document.getElementById("test-label-btn").addEventListener("click", handleTestLabel);
+document.getElementById("autoprint-resume-btn").addEventListener("click", resumeAutoPrint);
 document.getElementById("receipt-preview-close").addEventListener("click", closePreview);
 document.getElementById("receipt-preview-backdrop").addEventListener("click", closePreview);
 

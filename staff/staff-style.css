@@ -687,3 +687,18 @@ body {
   margin: 4px auto 6px;
   image-rendering: pixelated;
 }
+
+/* 重新開始自動列印 inside the red paused banner (no display rule on the
+   banner itself, so [hidden] keeps working). */
+.staff-banner-btn {
+  margin-left: 8px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: white;
+  color: var(--color-primary);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13.5px;
+  cursor: pointer;
+}

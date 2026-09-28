@@ -879,17 +879,98 @@ function buildCustomerLabelPreview(order) {
   return buildCustomerLabelModel(order, { withLogo: buildReceiptLogoBytes().length > 0 });
 }
 
-let printerDevice = null;
+let printerDevice = null; // set ONLY once a device is fully opened + claimed + tested
+
+// ------------------------------------------------------------
+// One printer, one job at a time.
+//
+// Every operation that talks to the printer — auto-print, the manual
+// 列印 button, 測試列印, and opening/claiming the device — runs through
+// withPrinterLock(), so they can never overlap. Before this, auto-print
+// started every waiting order at once; each one tried to open/claim the
+// same USB device in parallel, WebUSB rejected all but the first
+// ("operation in progress" / "interface already claimed"), and only one
+// order per page load printed.
+// ------------------------------------------------------------
+let printerQueue = Promise.resolve();
+
+// Upper bound for one whole job (connect + both documents). Individual
+// USB sends already time out after TRANSFER_TIMEOUT_MS, but open()/
+// claimInterface()/getDevices() can hang too — this guarantees the lock
+// is always released and the caller always gets an answer.
+const JOB_TIMEOUT_MS = 60 * 1000;
+
+function withPrinterLock(fn) {
+  const guarded = () => {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        forgetPrinter("print job timed out");
+        reject(new Error(`print job did not finish within ${JOB_TIMEOUT_MS / 1000}s`));
+      }, JOB_TIMEOUT_MS);
+    });
+    return Promise.race([fn(), timeout]).finally(() => clearTimeout(timer));
+  };
+  const run = printerQueue.then(guarded, guarded);
+  printerQueue = run.catch(() => {}); // a failed job must not jam the queue
+  return run;
+}
+
+// A single USB transfer that hangs (printer off mid-job, cable pulled,
+// firmware stuck) would otherwise leave the job — and the lock, and the
+// dashboard's self-update — waiting forever. After this long the send is
+// treated as failed and the device is dropped, so the next job
+// reconnects from scratch.
+const TRANSFER_TIMEOUT_MS = 20 * 1000;
+
+function forgetPrinter(reason) {
+  if (!printerDevice) return;
+  console.warn(`[ThermalPrinter] dropping printer connection (${reason}) — next job will reconnect`);
+  const dev = printerDevice;
+  printerDevice = null;
+  try {
+    if (dev.opened) dev.close().catch(() => {});
+  } catch {
+    // closing a half-dead device can throw synchronously — nothing to do
+  }
+}
+
+async function transferWithTimeout(endpointNumber, data) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`printer did not accept data within ${TRANSFER_TIMEOUT_MS / 1000}s`)), TRANSFER_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([printerDevice.transferOut(endpointNumber, data), timeout]);
+    if (result && result.status && result.status !== "ok") throw new Error(`USB transfer status "${result.status}"`);
+    return result;
+  } catch (err) {
+    forgetPrinter(err.message || "transfer failed");
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Unplugging the printer: drop the connection immediately so the next
+// job reconnects when it's plugged back in, instead of failing forever
+// on a dead device object.
+if (typeof navigator !== "undefined" && navigator.usb && navigator.usb.addEventListener) {
+  navigator.usb.addEventListener("disconnect", (event) => {
+    if (event.device === printerDevice) forgetPrinter("USB disconnected");
+  });
+}
 
 // Opens + claims a USBDevice the caller has already obtained (via
 // either requestDevice()'s picker or getDevices()'s silent list), and
 // runs the same live init-command test either way. Shared so
 // connectPrinter() and silentReconnect() below can't drift apart.
+// Must be called inside withPrinterLock(). printerDevice is only set
+// once everything succeeded — a half-opened device is never kept.
 async function openAndClaim(device) {
-  printerDevice = device;
-  await printerDevice.open();
-  if (printerDevice.configuration === null) {
-    await printerDevice.selectConfiguration(1);
+  if (!device.opened) await device.open();
+  if (device.configuration === null) {
+    await device.selectConfiguration(1);
   }
 
   // Log what's actually on the device before assuming anything —
@@ -902,13 +983,13 @@ async function openAndClaim(device) {
   // runs before any interface has been claimed. `.alternates` (the
   // array) holds the real descriptor data from device enumeration
   // regardless of claim state, so it's readable immediately.
-  console.log("[ThermalPrinter] interfaces:", printerDevice.configuration.interfaces);
-  printerDevice.configuration.interfaces.forEach((iface) => {
+  console.log("[ThermalPrinter] interfaces:", device.configuration.interfaces);
+  device.configuration.interfaces.forEach((iface) => {
     console.log(`[ThermalPrinter] interface ${iface.interfaceNumber} endpoints:`, iface.alternates[0].endpoints);
   });
 
-  const iface = printerDevice.configuration.interfaces[0];
-  await printerDevice.claimInterface(iface.interfaceNumber); // real number from the device, not assumed
+  const iface = device.configuration.interfaces[0];
+  if (!iface.claimed) await device.claimInterface(iface.interfaceNumber); // real number from the device, not assumed
 
   // `iface` above was captured from `configuration.interfaces[0]`
   // BEFORE claimInterface() resolved — Chrome doesn't retroactively
@@ -928,12 +1009,13 @@ async function openAndClaim(device) {
   // resolves without throwing, data actually reached the printer over
   // this exact interface/endpoint pair, not just that the device
   // picker matched it.
+  printerDevice = device;
   try {
-    await printerDevice.transferOut(outEndpoint.endpointNumber, new Uint8Array([ESC, 0x40]));
+    await transferWithTimeout(outEndpoint.endpointNumber, new Uint8Array([ESC, 0x40]));
     console.log("[ThermalPrinter] test transferOut succeeded — printer accepted the init command");
   } catch (err) {
     console.error("[ThermalPrinter] test transferOut failed:", err);
-    throw err;
+    throw err; // transferWithTimeout() already dropped printerDevice
   }
 
   return printerDevice;
@@ -946,8 +1028,10 @@ async function connectPrinter() {
   // requires an active user gesture (a click) — this can only be
   // called from the manual "Connect printer" button, never from a
   // background poll loop. See silentReconnect() for that case.
+  // The picker runs immediately (it needs the tap's user activation);
+  // only the open/claim waits its turn behind any running print job.
   const device = await navigator.usb.requestDevice({ filters: KNOWN_PRINTERS });
-  return openAndClaim(device);
+  return withPrinterLock(() => openAndClaim(device));
 }
 
 // Silently reconnects to a printer Chrome already has permission for
@@ -955,6 +1039,7 @@ async function connectPrinter() {
 // requirement, so it's safe to call from the auto-print poll loop.
 // Returns null (doesn't throw) if there's no previously-authorized
 // device currently plugged in, so callers can fall back accordingly.
+// Must be called inside withPrinterLock().
 async function silentReconnect() {
   if (printerDevice) return printerDevice; // already connected this session
   const devices = await navigator.usb.getDevices();
@@ -965,6 +1050,7 @@ async function silentReconnect() {
 
 // Connects (silently if already authorized) and returns the printer's
 // OUT endpoint number — shared by printOrder() and printTestLabel().
+// Must be called inside withPrinterLock().
 async function getOutEndpoint() {
   if (!navigator.usb) {
     throw new Error("WebUSB not supported — use Chrome on Android.");
@@ -972,11 +1058,10 @@ async function getOutEndpoint() {
   if (!printerDevice) {
     const reconnected = await silentReconnect();
     if (!reconnected) {
-      // No prior authorization to silently reuse — fall back to the
-      // picker. Fine for a manual click (has a user gesture); throws
-      // if this call isn't inside one (e.g. auto-print with no
-      // printer ever connected yet this browser/origin).
-      await connectPrinter();
+      // No prior authorization to silently reuse. Only a direct tap on
+      // 連接印表機 can show Chrome's device picker (it needs a user
+      // gesture), so say so instead of trying it from inside a job.
+      throw new Error("No authorized printer found — tap 連接印表機 first.");
     }
   }
 
@@ -996,27 +1081,30 @@ async function getOutEndpoint() {
   return endpoint.endpointNumber;
 }
 
-async function printOrder(order) {
-  const endpointNumber = await getOutEndpoint();
+function printOrder(order) {
+  return withPrinterLock(async () => {
+    const endpointNumber = await getOutEndpoint();
 
-  // Two separate documents, same short_id, sent as two sequential
-  // jobs (each ends in its own cut) over the one connected printer.
-  // Kitchen ticket first so food prep can start before the customer
-  // label finishes printing. If either transferOut throws, the other
-  // has already run or never runs — the caller (staff.js's
-  // handlePrint) treats that as one failed print() call and won't
-  // mark the order printed, same as today.
-  await printerDevice.transferOut(endpointNumber, buildKitchenTicket(order));
-  await printerDevice.transferOut(endpointNumber, buildCustomerLabel(order));
+    // Two separate documents, same short_id, sent as two sequential
+    // jobs (each ends in its own cut) over the one connected printer.
+    // Kitchen ticket first so food prep can start before the customer
+    // label finishes printing. If either transfer fails or times out,
+    // the whole call rejects — the caller (staff.js's handlePrint)
+    // treats that as one failed print and won't mark the order printed.
+    await transferWithTimeout(endpointNumber, buildKitchenTicket(order));
+    await transferWithTimeout(endpointNumber, buildCustomerLabel(order));
+  });
 }
 
 // Staff dashboard's 測試列印 button: prints ONLY a customer label (with
 // the logo) for sample data — no kitchen ticket, no order in the
 // database, nothing marked printed. For checking the logo and layout on
-// the real printer.
-async function printTestLabel(sampleOrder) {
-  const endpointNumber = await getOutEndpoint();
-  await printerDevice.transferOut(endpointNumber, buildCustomerLabel(sampleOrder));
+// the real printer. Queued behind any running job like everything else.
+function printTestLabel(sampleOrder) {
+  return withPrinterLock(async () => {
+    const endpointNumber = await getOutEndpoint();
+    await transferWithTimeout(endpointNumber, buildCustomerLabel(sampleOrder));
+  });
 }
 
 // Exposed globally for staff.js to call. CHARS_PER_LINE and the two
