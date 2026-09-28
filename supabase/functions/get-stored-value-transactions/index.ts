@@ -60,18 +60,25 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, code: "unknown", error: String(err) }, 500);
   }
 
-  const supabase = getServiceClient();
-  const { data, error } = await supabase
-    .from("stored_value_transactions")
-    .select("id, amount, type, created_at")
-    .eq("user_id", sub)
-    .order("created_at", { ascending: false })
-    .limit(MAX_TRANSACTIONS);
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from("stored_value_transactions")
+      .select("id, amount, type, created_at")
+      .eq("user_id", sub)
+      .order("created_at", { ascending: false })
+      .limit(MAX_TRANSACTIONS);
 
-  if (error) {
-    console.error("[get-stored-value-transactions] query failed", error);
-    return json({ ok: false, code: "db_error", error: error.message }, 500);
+    if (error) {
+      console.error("[get-stored-value-transactions] query failed", error);
+      return json({ ok: false, code: "db_error", error: error.message }, 500);
+    }
+
+    return json({ ok: true, transactions: data ?? [] }, 200);
+  } catch (err) {
+    // getServiceClient() itself can throw; without this, that propagates
+    // as a raw platform error instead of JSON (see get-stored-value-balance).
+    console.error("[get-stored-value-transactions] unexpected failure", err);
+    return json({ ok: false, code: "unknown", error: String(err) }, 500);
   }
-
-  return json({ ok: true, transactions: data ?? [] }, 200);
 });

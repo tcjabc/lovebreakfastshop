@@ -49,18 +49,26 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, code: "unknown", error: String(err) }, 500);
   }
 
-  const supabase = getServiceClient();
-  const { data, error } = await supabase
-    .from("stored_value_accounts")
-    .select("balance")
-    .eq("user_id", sub)
-    .maybeSingle();
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from("stored_value_accounts")
+      .select("balance")
+      .eq("user_id", sub)
+      .maybeSingle();
 
-  if (error) {
-    console.error("[get-stored-value-balance] query failed", error);
-    return json({ ok: false, code: "db_error", error: error.message }, 500);
+    if (error) {
+      console.error("[get-stored-value-balance] query failed", error);
+      return json({ ok: false, code: "db_error", error: error.message }, 500);
+    }
+
+    // No row yet = never topped up = balance 0, not an error.
+    return json({ ok: true, balance: data?.balance ?? 0 }, 200);
+  } catch (err) {
+    // getServiceClient() itself can throw (e.g. missing env var); without
+    // this, that propagates as a raw platform error instead of JSON, and
+    // the client sees it as an opaque network failure.
+    console.error("[get-stored-value-balance] unexpected failure", err);
+    return json({ ok: false, code: "unknown", error: String(err) }, 500);
   }
-
-  // No row yet = never topped up = balance 0, not an error.
-  return json({ ok: true, balance: data?.balance ?? 0 }, 200);
 });
