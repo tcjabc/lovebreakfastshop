@@ -9,8 +9,9 @@
 //
 // Request:  POST { id_token }
 // Success:  200 { ok: true, balance: number }
-// Failure:  401 { ok: false, code, error }  (bad/expired/missing token)
-//           500 { ok: false, code: "db_error", error }
+// Failure:  401 { ok: false, code: "auth_invalid", error }  (bad/expired/missing token)
+//           503 { ok: false, code: "auth_unavailable", error }  (LINE unreachable)
+//           500 { ok: false, code: "db_error"|"unknown", error }
 // ============================================================
 
 import { verifyLineToken, LineTokenVerificationError } from "../_shared/verifyLineToken.ts";
@@ -44,7 +45,14 @@ Deno.serve(async (req: Request) => {
     sub = await verifyLineToken(body.id_token ?? "");
   } catch (err) {
     if (err instanceof LineTokenVerificationError) {
-      return json({ ok: false, code: err.code, error: err.message }, 401);
+      if (err.code === "network" || err.code === "config" || err.code === "unknown") {
+        console.error("[get-stored-value-balance] LINE verification unavailable", err);
+        return json({ ok: false, code: "auth_unavailable", error: "Could not verify LINE login right now" }, 503);
+      }
+      // Normalised to "auth_invalid" (was the raw err.code, e.g. "expired")
+      // to match place-order/upsert-member/member-favorites/member-orders —
+      // the client treats one consistent code as "needs a fresh login".
+      return json({ ok: false, code: "auth_invalid", error: "LINE login is invalid or expired" }, 401);
     }
     return json({ ok: false, code: "unknown", error: String(err) }, 500);
   }

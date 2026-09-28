@@ -15,7 +15,7 @@
 <meta name="theme-color" content="#fbefe6" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20260928-3" />
+<link rel="stylesheet" href="style.css?v=20260928-4" />
 </head>
 <body>
 
@@ -88,6 +88,15 @@
         <span id="member-name" class="member-name"></span>
       </button>
       <button id="member-pill" class="member-pill" hidden>成為會員</button>
+
+      <!-- Shown instead of nothing extra when a logged-in member's LIFF
+           ID token goes stale WHILE the page is already open (see
+           currentIdToken()/showReloginPrompt() in app.js) — never shown
+           at page load, since refreshExpiredLoginSilently() there
+           refreshes a stale token silently before this could ever fire.
+           Tapping it is the only thing that calls reloginWithLine()
+           from here; showing it never redirects on its own. -->
+      <button id="relogin-prompt" class="relogin-prompt" type="button" hidden>登入已過期，點此重新登入</button>
     </div>
 
     <!-- Member menu — a small popover anchored to #member-badge
@@ -351,6 +360,6 @@
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
   <script src="supabase-config.js?v=20260928-2"></script>
-  <script src="app.js?v=20260928-3"></script>
+  <script src="app.js?v=20260928-5"></script>
 </body>
 </html>

@@ -1443,6 +1443,7 @@ function handleLogout() {
   stampProgress = null;
   currentHeaderBalance = null;
   showMemberPill();
+  hideReloginPrompt(); // was only ever about THIS session's token — a fresh login starts clean
   refreshFavoriteUI();
   renderMemberPicksRow();
   refreshStampWidgetUI();
@@ -1734,23 +1735,29 @@ function computeStampDiscount() {
   return { itemId: drink.itemId, discount: Math.min(drink.unitPrice, MENU_RULES.stamp.freeDrinkCap) };
 }
 
-// Called once right after login resolves (syncLoggedInProfile()),
-// mirroring loadMemberPicks(). A failed/unreachable call leaves
-// stampProgress null — stampRedemptionEligible() treats that exactly
-// like "not unlocked", so a fetch hiccup just means no banner shown
-// this session, never a false unlock.
+// Called once right after login resolves (syncLoggedInProfile()), and
+// again later by refreshStampProgressIfMember() (a Taipei date change,
+// or the page becoming visible again — see startBackgroundChecks()).
+// Every call site already knows we're a logged-in member, so a failed/
+// unreachable call here is always "couldn't get a fresh answer right
+// now", never "not a member" — it KEEPS the last successfully-loaded
+// stampProgress rather than wiping it to null, so a transient hiccup
+// (e.g. liff.getIDToken() briefly failing right after the page resumes
+// from being backgrounded) can't reset the header's 5-circle widget
+// back to blank/all-dashed after it already showed real progress. Only
+// the very first call this session, before anything has ever loaded
+// successfully, can still leave stampProgress null — exactly the state
+// stampRedemptionEligible() already treats like "not unlocked", so a
+// fetch hiccup on that very first load still just means no banner
+// shown, never a false unlock.
 async function loadStampProgress() {
-  let idToken;
-  try {
-    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
-  } catch (err) {
-    idToken = null;
-  }
-  if (!idToken) {
-    stampProgress = null;
-  } else {
+  const idToken = currentIdToken();
+  if (idToken) {
     const result = await callEdgeFunction("get-stamp-progress", { id_token: idToken });
-    stampProgress = result.ok ? result : null;
+    if (result.ok) stampProgress = result;
+    else console.error("[Stamp] get-stamp-progress failed — keeping last known progress", result);
+  } else {
+    console.warn("[Stamp] no usable LIFF ID token — keeping last known progress");
   }
   refreshStampWidgetUI();
 }
@@ -1907,34 +1914,40 @@ function closeOrderHistorySheet() {
 // after an order actually spends stored value (see submitOrder()).
 let currentHeaderBalance = null;
 
-// Called once right after login resolves (syncLoggedInProfile()),
-// mirroring loadStampProgress()/loadMemberPicks() — not re-fetched on
-// every render, since nothing changes it within a session except an
-// order that actually pays with stored value, which updates
-// currentHeaderBalance directly instead of re-fetching (see
-// submitOrder()).
+// Called once right after login resolves (syncLoggedInProfile()) — not
+// re-fetched on a timer or on visibility, since nothing changes it
+// within a session except an order that actually pays with stored
+// value, which updates currentHeaderBalance directly instead of
+// re-fetching (see submitOrder()). It CAN still be called a second
+// time from handlePlaceOrderFailure()'s insufficient_funds case, to
+// refresh the header after a failed spend — every call site already
+// knows we're a logged-in member, so a failed/unreachable call here
+// KEEPS the last successfully-loaded balance rather than wiping it to
+// "—", the same reasoning as loadStampProgress() above (a transient
+// hiccup, e.g. right after the page resumes from being backgrounded,
+// shouldn't make a real NT$0 balance look unknown). Only the very
+// first call this session, before anything has ever loaded
+// successfully, can still leave currentHeaderBalance null.
 async function loadStoredValueBalance() {
-  let idToken;
-  try {
-    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
-  } catch (err) {
-    idToken = null;
-  }
-  if (!idToken) {
-    currentHeaderBalance = null;
-  } else {
+  const idToken = currentIdToken();
+  if (idToken) {
     const result = await callEdgeFunction("get-stored-value-balance", { id_token: idToken });
-    currentHeaderBalance = result.ok ? result.balance : null;
+    if (result.ok) currentHeaderBalance = result.balance;
+    else console.error("[StoredValue] get-stored-value-balance failed — keeping last known balance", result);
+  } else {
+    console.warn("[StoredValue] no usable LIFF ID token — keeping last known balance");
   }
   refreshBalanceWidgetUI();
 }
 
 // Updates the header readout to match currentHeaderBalance — same
 // division of labour as refreshStampWidgetUI(): loadStoredValueBalance()
-// decides *what* the number is, this only ever renders it. A failed/
-// not-yet-loaded fetch shows "NT$—" rather than "NT$0", so a real zero
-// balance (a real, known fact) can never be confused with "couldn't
-// reach the server" (an unknown one).
+// decides *what* the number is, this only ever renders it. Never having
+// loaded (or the very first load failing) shows "NT$—" rather than
+// "NT$0", so a real zero balance (a real, known fact) can never be
+// confused with "couldn't reach the server" (an unknown one) — but once
+// a real value HAS been shown, it stays on screen through any later
+// failed refresh; see loadStoredValueBalance()'s own comment.
 function refreshBalanceWidgetUI() {
   document.getElementById("header-balance-amount").textContent =
     currentHeaderBalance != null ? `NT$${currentHeaderBalance}` : "NT$—";
@@ -1990,20 +2003,18 @@ async function openTransactionsSheet() {
   const rows = document.getElementById("transactions-rows");
   rows.innerHTML = `<p class="order-history-empty">載入中…</p>`;
 
-  let idToken;
-  try {
-    idToken = liff.isLoggedIn() ? liff.getIDToken() : null;
-  } catch (err) {
-    idToken = null;
-  }
+  const idToken = currentIdToken();
 
   const result = idToken
     ? await callEdgeFunction("get-stored-value-transactions", { id_token: idToken })
-    : { ok: false, code: "unknown", error: "No ID token available" };
+    : { ok: false, code: "auth_invalid", error: "No usable LIFF ID token" };
 
   if (!result.ok) {
     console.error("[StoredValue] get-stored-value-transactions failed", result);
-    rows.innerHTML = `<p class="order-history-empty">載入失敗，請稍後再試</p>`;
+    rows.innerHTML =
+      result.code === "auth_invalid"
+        ? `<p class="order-history-empty">登入已過期，請重新開啟頁面後再試</p>`
+        : `<p class="order-history-empty">載入失敗，請稍後再試</p>`;
     return;
   }
 
@@ -2218,7 +2229,11 @@ async function submitOrder() {
     redeem_stamp: Boolean(computeStampDiscount()),
     client_order_id: checkoutOrderId(),
   };
-  const idToken = currentIdToken();
+  // rawIdToken(), not currentIdToken() — see rawIdToken()'s own comment:
+  // place-order is the server-side judge of whether this token is still
+  // good, and an expired one there already gets its own explicit relogin
+  // path (auth_invalid below), rather than silently checking out as a guest.
+  const idToken = rawIdToken();
   if (idToken) request.id_token = idToken;
 
   const submitBtn = document.getElementById("submit-order");
@@ -2291,13 +2306,140 @@ function checkoutOrderId() {
   return checkoutAttempt.id;
 }
 
-// The current LIFF ID token, or null (guest, or LIFF unavailable).
-function currentIdToken() {
+// ------------------------------------------------------------
+// LIFF ID token expiry. liff.isLoggedIn()/liff.getIDToken() don't
+// refresh anything on demand — a token can already be expired (or
+// about to be) by the time it's used, and every server-side check
+// (verifyLineToken.ts) rejects it outright. Decoding `exp` client-side
+// (no signature check — this is only a "should we even bother" hint,
+// never the real check) lets the app tell that apart from any other
+// failure BEFORE making a doomed request, so it can quietly refresh at
+// load time (refreshExpiredLoginSilently()) and only ever prompt —
+// never auto-redirect — once the page is already in use
+// (currentIdToken()'s showReloginPrompt()).
+// ------------------------------------------------------------
+const ID_TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+
+// No signature/audience check — same reasoning as above. Returns null
+// (never "expired") for anything unreadable, so a decode hiccup can
+// never be mistaken for an actually-expired token.
+function decodeIdTokenExp(idToken) {
+  try {
+    const base64 = idToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const claims = JSON.parse(atob(padded));
+    return typeof claims.exp === "number" ? claims.exp * 1000 : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function isIdTokenExpiring(idToken) {
+  const expMs = decodeIdTokenExp(idToken);
+  return expMs != null && expMs - Date.now() <= ID_TOKEN_EXPIRY_BUFFER_MS;
+}
+
+// Raw LIFF ID token, or null (guest / LIFF unavailable) — no expiry
+// awareness at all. The one caller that needs this instead of
+// currentIdToken() below is submitOrder(): place-order verifies the
+// token server-side regardless, and an expired one there already gets
+// its own explicit one-tap relogin (handlePlaceOrderFailure()'s
+// auth_invalid case → reloginWithLine()) — silently swapping in "no
+// token" here instead would submit a real member's order as an
+// anonymous guest, silently losing their stored-value/stamp-card
+// attribution, which is worse than just letting the server decide.
+function rawIdToken() {
   try {
     return liff.isLoggedIn() ? liff.getIDToken() : null;
   } catch (err) {
     return null;
   }
+}
+
+// The LIFF ID token for every OTHER member call in this file, or null
+// if there's no login, LIFF is unavailable, OR the token is expired/
+// about to expire (isIdTokenExpiring()) — treated the same as "no
+// token" so callers skip a doomed network round-trip entirely (each
+// already keeps its last known value / returns auth_invalid for a
+// null token — see e.g. loadStampProgress()/loadStoredValueBalance()/
+// fetchMemberOrders()/callMemberFavorites()) instead of hitting the
+// server and getting the same rejection back a slower way. Also
+// surfaces the unobtrusive header re-login prompt the first time this
+// happens in a session (showReloginPrompt()) — never a redirect, only
+// an explicit tap on that prompt calls reloginWithLine(). Self-heals
+// (hideReloginPrompt()) if a later call finds a good token again, e.g.
+// after LIFF silently refreshed one on its own.
+function currentIdToken() {
+  const token = rawIdToken();
+  if (!token) return null;
+  if (isIdTokenExpiring(token)) {
+    showReloginPrompt();
+    return null;
+  }
+  hideReloginPrompt();
+  return token;
+}
+
+// Small unobtrusive header prompt (#relogin-prompt) — shown only when
+// a member call skips itself because the token is expiring (see
+// currentIdToken() above). Never shown at page load with a stale
+// token — refreshExpiredLoginSilently() handles that silently before
+// this could ever fire. Tapping it is the only thing that calls
+// reloginWithLine() from here; showing it never redirects on its own.
+let reloginPromptShown = false;
+
+function showReloginPrompt() {
+  if (reloginPromptShown) return;
+  reloginPromptShown = true;
+  const el = document.getElementById("relogin-prompt");
+  if (el) el.hidden = false;
+}
+
+function hideReloginPrompt() {
+  if (!reloginPromptShown) return;
+  reloginPromptShown = false;
+  const el = document.getElementById("relogin-prompt");
+  if (el) el.hidden = true;
+}
+
+// One-time guard against a refresh loop: if a token LIFF hands back
+// right after a relogin STILL reads as expiring (a broken device
+// clock, a genuine LINE-side outage), retrying forever would hang the
+// page in a reload loop. sessionStorage survives the reload this
+// triggers but not a real new tab/session, so one stuck tab gives up
+// after a single attempt while a fresh visit still gets to try.
+const AUTO_RELOGIN_GUARD_KEY = "autoReloginAttempted";
+
+// Called once from init(), right after liff.init() and before the
+// silent syncMemberState() check. Returns true if it triggered a
+// relogin (a reload/redirect is already under way — the caller should
+// stop, nothing else matters on this load) or false if nothing needed
+// doing (guest, LIFF unavailable, or the token's still good within
+// ID_TOKEN_EXPIRY_BUFFER_MS — confirming a valid token never redirects).
+async function refreshExpiredLoginSilently() {
+  const idToken = rawIdToken();
+  if (!idToken || !isIdTokenExpiring(idToken)) return false;
+
+  let alreadyAttempted;
+  try {
+    alreadyAttempted = sessionStorage.getItem(AUTO_RELOGIN_GUARD_KEY) === "1";
+  } catch (err) {
+    return false; // can't guard against a loop — don't risk one
+  }
+  if (alreadyAttempted) {
+    console.warn("[Login] ID token still expiring after one silent relogin this session — leaving it for the header prompt");
+    return false;
+  }
+
+  try {
+    sessionStorage.setItem(AUTO_RELOGIN_GUARD_KEY, "1");
+  } catch (err) {
+    return false;
+  }
+
+  console.log("[Login] ID token expired/expiring at page load — silently refreshing");
+  reloginWithLine();
+  return true;
 }
 
 // After a successful MEMBER order, bring the header widgets up to date
@@ -2443,10 +2585,15 @@ async function handlePlaceOrderFailure(result, lineKeys) {
   alert(`送出失敗，請稍後再試。${ORDER_NOT_CHARGED}`);
 }
 
-// auth_invalid: the LIFF ID token was rejected (typically expired).
-// Log out and back in for a fresh one, keeping the cart and note across
-// the reload. Inside LINE, liff.init() logs back in automatically on
-// reload; outside LINE, liff.login() redirects to LINE's login page.
+// Logs out and back in for a fresh ID token, keeping the cart and note
+// across whatever that takes. Inside LINE, liff.init() logs back in
+// automatically on reload; outside LINE, liff.login() redirects to
+// LINE's login page. Three call sites, none of them automatic except
+// the first: place-order's auth_invalid failure (behind a confirm()
+// dialog, above), the header's #relogin-prompt tap (wireUpUI()), and
+// refreshExpiredLoginSilently() at page load (the one place this runs
+// without the visitor tapping anything first — see its own comment for
+// why that's still safe).
 function reloginWithLine() {
   persistCartForLoginRedirect();
   try {
@@ -2492,6 +2639,7 @@ function wireUpUI() {
   });
 
   document.getElementById("member-pill").addEventListener("click", openBenefitsCard);
+  document.getElementById("relogin-prompt").addEventListener("click", reloginWithLine); // the only explicit tap that triggers this mid-session — see currentIdToken()/showReloginPrompt()
   document.getElementById("benefits-close").addEventListener("click", closeBenefitsCard); // X: zero side effects, reopenable via the pill anytime
   document.getElementById("benefits-backdrop").addEventListener("click", closeBenefitsCard);
   document.getElementById("benefits-login").addEventListener("click", async () => {
@@ -2654,6 +2802,14 @@ async function init() {
     console.error("LIFF init failed", err);
     // Menu still works for browser testing even if LIFF can't init
   }
+
+  // Before the silent membership check: if the existing token is
+  // already expired/about to expire, refresh it now (reload/redirect)
+  // rather than let syncMemberState() show a badge backed by a token
+  // every member call will immediately reject. Returns true only when
+  // it actually triggered that reload/redirect — nothing after this
+  // load matters then, so stop here.
+  if (await refreshExpiredLoginSilently()) return;
 
   await syncMemberState(); // silent check only — see loginWithLine() for the only place login is actually triggered
   startBackgroundChecks(); // deploy-marker polling + stamp-circle refresh across midnight

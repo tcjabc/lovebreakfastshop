@@ -183,6 +183,33 @@ body {
   background: var(--color-primary-hover);
 }
 
+/* Mid-session re-login prompt — same pill shape as .member-pill, but a
+   warm amber (not --color-primary red, which reads as an error state
+   elsewhere) since this isn't a failure, just "please tap to renew." */
+.relogin-prompt {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
+  background: #b5651d;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.relogin-prompt[hidden] {
+  display: none;
+}
+
+.relogin-prompt:active {
+  background: #954f14;
+}
+
 /* Member menu — a small popover anchored to #member-badge, not a full
    sheet dialog like .checkout-sheet below, so it gets its own
    lightweight shell rather than reusing that pattern. The backdrop is
