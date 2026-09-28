@@ -141,6 +141,19 @@ dashboard markup at all.
   technical collision, but reusing the name for two different gates
   would invite exactly the mix-up these distinct names avoid.
 
+**Second layer — Supabase Auth staff login.** Passing the PIN only
+serves the real dashboard files; the dashboard itself then requires
+signing in as the one shared Supabase Auth staff account before it
+does anything else. `staff.js` creates its own Supabase client
+(`staffClient`) with its own `localStorage` key
+(`storageKey: "lb-staff-auth"`) — deliberately separate from the
+customer app's client on the same origin, so a staff session can never
+leak into (or be leaked by) the customer page. Session persists across
+reloads/PIN-cookie expiry via `staffClient.auth`'s own refresh token;
+signing out (`登出`) clears it. This authenticated session is what
+`orders`/`members`' RLS policies (below) actually check — the PIN gate
+alone grants no database access at all.
+
 ## Backend: Supabase
 
 Free-tier Supabase project already created (`lovebreakfastshop`,
@@ -171,26 +184,56 @@ omissions:
   the comment's pointer is just wrong. Worth confirming with whoever
   ran that SQL before writing anything into README.md on their behalf.
 
-RLS is enabled on every table, but the posture splits in two, by
-whether the table touches money/redemptions:
+**RLS is enabled on every table. As of the lockdown (L1–L4, complete
+2026-09-29), the anon/publishable key has NO table access at all except
+one read:**
 
-* `orders`, `members`, `favorites`: permissive (`allow all`) for the
-  anon/publishable key. Fine for a single-shop app with no auth — a
-  client can already write `orders.user_id` for anyone via the anon
-  key today, so `favorites` being equally open doesn't introduce a new
-  weakness (see README's "Favourites" section).
-* `feature_flags`: read-only for the anon key by design (toggling a
-  tester is meant to require a manual Supabase edit, never something
-  the app itself can do).
+* `pickup_slots`: public `SELECT` (`Allow read`) — the only remaining
+  anon-key table access anywhere in the app, used purely to show taken/
+  available counts in the picker before checkout. Reserving a slot for
+  real happens inside `place_order()` (below), not a direct write.
+* `orders`, `members`: **zero anon policies** — the old permissive
+  "allow all" policy on each was dropped at cutover
+  (`supabase/sql/07_cutover.sql`). `authenticated` (the signed-in staff
+  account, see "Staff dashboard PIN gate" above) keeps exactly
+  `staff can read orders` (SELECT), `staff can update orders` (UPDATE),
+  and `staff can read members` (SELECT) — no INSERT/DELETE for anyone
+  via RLS; those tables are written only through
+  `place_order()`/`upsert-member` (service role, bypasses RLS).
+* `favorites`, `feature_flags`: **zero policies at all**, for every
+  role including `authenticated` — default-deny. `favorites` is
+  reachable only via the `member-favorites` Edge Function (service
+  role); `feature_flags` is read only inside `place-order` (service
+  role) to decide `is_test`. Neither the customer app nor the staff
+  dashboard reads either table directly anymore.
 * `stored_value_accounts`, `stored_value_transactions`,
   `stamp_redemptions`: **zero RLS policies — default-deny for both
-  anon and authenticated.** Nothing in these three is reachable except
-  through the service-role key (which bypasses RLS entirely), used
-  exclusively by the Edge Functions in `supabase/functions/` — see
-  "Server-side identity verification" below. This is deliberate: these
-  three are the only tables a client writing `orders.user_id` for
-  someone else could otherwise use to move real money or claim a
-  reward that wasn't earned.
+  anon and authenticated**, unchanged since these were designed this
+  way from the start. Nothing in these three is reachable except
+  through the service-role key, used exclusively by the Edge Functions
+  in `supabase/functions/` — see "Server-side identity verification"
+  below.
+
+Two related SQL-level changes landed in the same cutover:
+`reserve_pickup_slot()`/`next_daily_order_number()` had `EXECUTE`
+revoked from `anon`/`authenticated`/`PUBLIC` (both are still callable
+by `place_order()` itself — a nested call inside a `security definer`
+function runs as the function's *owner*, not the original caller, so
+revoking the original caller's grant doesn't affect `place_order()`);
+and `stored_value_transactions.order_id` was converted from `text` to
+`uuid` with a real foreign key to `orders(id)` (`stamp_redemptions`
+got the same FK), after confirming no orphaned rows existed.
+`spend_stored_value()` — only ever called by the now-deleted
+`spend-stored-value` Edge Function — was dropped in the same
+transaction, since it could no longer insert its `text` parameter into
+the now-`uuid` column.
+
+**All SQL for this project is hand-run, never applied automatically.**
+Every change lives as a numbered file in `supabase/sql/` (`00`
+through `07` as of this writing) — drafted here, reviewed in chat, then
+run manually by the project owner in the Supabase SQL editor. See
+`supabase/sql/README.md` for what each file does and the safe run
+order.
 
 `supabase-config.js` uses Supabase's newer key naming: the
 **publishable key** (`sb\_publishable\_...`), not the legacy anon key —
@@ -202,40 +245,57 @@ not from anything checked in here.
 
 ## Server-side identity verification (Edge Functions)
 
-`orders`/`members`/`favorites` staying permissive RLS (above) is fine
-because nothing about them moves money. Stored Value and the Weekday
-Stamp Card do, so they can't rely on a client-supplied `user_id` the
-way the rest of the app does — anyone with devtools open could POST an
-`orders` row with someone else's `user_id` today, and that's an
-accepted risk for a free breakfast order but not for a cash balance.
-Every Stored Value/Stamp Card Edge Function (`supabase/functions/`)
-verifies identity itself before trusting anything, via one of two
-shared helpers in `supabase/functions/_shared/`:
+**Nothing client-side is trusted for identity anymore, for any of
+orders/members/favorites/stored value/the stamp card.** Every write
+that matters — placing an order, updating a member's own row, editing
+favorites, spending or topping up stored value, redeeming the stamp
+card — goes through an Edge Function that re-derives who's calling
+from a verified credential, never from a `user_id` (or PIN) the
+request body sends. The only identity the app still accepts at face
+value is "guest": an order placed with no LIFF token at all gets
+`user_id = null`, same as always — that's an anonymous order, not
+someone else's identity being spoofed. Two shared helpers in
+`supabase/functions/_shared/` do the verification:
 
-* **`verifyLineToken.ts`** — for the customer-initiated functions
-  (`get-stored-value-balance`, `spend-stored-value`,
-  `get-stamp-progress`, `redeem-stamp-drink`): POSTs the caller's LIFF
-  ID token to LINE's own `https://api.line.me/oauth2/v2.1/verify`
-  endpoint and only trusts the `sub` claim LINE hands back, never a
-  `user_id` the client sends directly. Distinguishes expired/
-  wrong-audience/invalid/network failures via `err.code` rather than
-  string-matching messages.
+* **`verifyLineToken.ts`** (`verifyLineToken()` / the claims-returning
+  `verifyLineTokenClaims()`) — for every customer-initiated function:
+  `place-order`, `upsert-member`, `member-orders`, `member-favorites`,
+  `get-stored-value-balance`, `get-stored-value-transactions`,
+  `get-stamp-progress`. POSTs the caller's LIFF ID token to LINE's own
+  `https://api.line.me/oauth2/v2.1/verify` endpoint and only trusts the
+  `sub` (and, via `verifyLineTokenClaims()`, `name`/`picture`) claims
+  LINE hands back — never anything the client sends directly.
+  Distinguishes expired/wrong-audience/invalid/network failures via
+  `err.code` rather than string-matching messages; a network failure
+  surfaces to the client as `auth_unavailable` (LINE unreachable, not
+  the token's fault), never treated the same as a genuinely bad token.
 * **`verifyStaffPin.ts`** — for the staff-initiated functions
   (`topup-stored-value`, `get-stored-value-balance-staff`): staff have
   no LINE identity of their own, so these gate on the `STAFF_PIN`
   Edge Function secret instead, compared with a constant-time check
   (never `===`) so response timing can't leak the PIN a character at a
-  time.
+  time. (This is separate from the staff dashboard's own Supabase Auth
+  login and Cloudflare Worker PIN — see "Staff dashboard PIN gate"
+  above — three distinct gates, none of which substitute for another.)
 
-Both spend and top-up ultimately call a `security definer` Postgres
-function (`spend_stored_value()`/`topup_stored_value()`) with
-`execute` revoked from `anon`/`authenticated` — so even a stray direct
-table write can't move a balance; only those two functions, called
-only from Edge Functions holding the service-role key, can. Redeeming
-a stamp-card drink is a plain insert into `stamp_redemptions` instead
-(no Postgres function), but gets the same effective protection from
-the table's default-deny RLS plus the `(user_id, week_start)` primary
-key rejecting a concurrent double-redeem atomically.
+**`place_order()`** (`security definer`, `supabase/sql/02_place_order.sql`
++ `06_place_order_idempotent.sql`) is the single Postgres function
+behind checkout: given a verified `user_id` (or `null` for a guest) and
+server-priced totals, it atomically reserves the pickup slot, assigns
+the daily order number (or a random test id), spends stored value if
+chosen, redeems the stamp-card drink if requested, and inserts the
+order — all in one transaction, all-or-nothing. It's idempotent on
+`client_order_id` (one uuid the app generates per checkout and reuses
+on any retry — see `app.js`'s `checkoutOrderId()`): a retry for the
+same id and caller returns the already-placed order untouched instead
+of reserving/charging again, so a lost network response followed by a
+retry can never double-charge or double-book. This replaced two
+now-deleted Edge Functions, `spend-stored-value` and
+`redeem-stamp-drink`, along with the `spend_stored_value()` Postgres
+function they called — both retired once `place_order()` took over
+their logic and the client stopped calling either. `topup_stored_value()`
+is the one Stored Value function that's still separate, since topping
+up only ever happens from the staff panel, not as part of checkout.
 
 ## LINE integration status
 
@@ -294,9 +354,9 @@ a manual `feature_flags` row edit in Supabase.
 Member rows, order history and favourites go through the LIFF-verified
 `upsert-member`, `member-orders` and `member-favorites` Edge Functions
 (user id always from the verified token, never the request); orders
-are placed via `place-order`. The permissive `favorites`/`orders`/
-`members` RLS policies are still in place until the L4 cutover drops
-them.
+are placed via `place-order`. As of the L4 cutover (2026-09-29), the
+old permissive `favorites`/`orders`/`members` RLS policies are gone —
+see "Backend: Supabase" above for the final policy set.
 * The LIFF channel's scopes only had `chat_message.write` enabled
 (see README.md Step 3) — `profile` scope was turned on in the LINE
 Developers Console to get this far; if `liff.getProfile()` ever starts
@@ -474,6 +534,16 @@ redemption state; see "Server-side identity verification" above
 * Don't trust a client-supplied `user_id` inside a Stored Value/Stamp
 Card Edge Function — always re-derive it from `verifyLineToken()` (or
 gate on `verifyStaffPin()` for the staff-initiated ones)
+* Don't recreate the old permissive ("allow all") RLS policies on
+`orders`, `members` or `favorites`, and don't add a public read policy
+to `feature_flags` — the L4 cutover (`supabase/sql/07_cutover.sql`)
+deliberately dropped these; anon's only table access anywhere in the
+app is now `pickup_slots` SELECT. If a future feature genuinely needs
+the client to read/write one of these tables directly, that's a design
+discussion first, not a policy add
+* Don't run any SQL against Supabase without showing it in chat first —
+every change lives as a numbered file in `supabase/sql/`, drafted here
+and run manually by the project owner; see that folder's `README.md`
 * Don't widen `assets.directory` in `wrangler.jsonc`, or delete/narrow
 `.assetsignore`, without re-checking why each entry is there —
 `assets.directory` is the repo root, and `.assetsignore` is the only

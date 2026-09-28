@@ -126,6 +126,16 @@ alter table orders enable row level security;
 create policy "allow all" on orders for all using (true) with check (true);
 ```
 
+**Update (lockdown L4, complete):** this got tightened. Orders are now
+placed exclusively through the `place-order` Edge Function's
+`place_order()` Postgres function (service role); the "allow all"
+policy above was dropped in `supabase/sql/07_cutover.sql`, replaced
+with `authenticated`-only `SELECT`/`UPDATE` policies for the staff
+dashboard (see `supabase/sql/05_staff_policies.sql`). A fresh setup
+should skip creating this policy and follow the SQL files in
+`supabase/sql/` instead, in the order given in that folder's
+`README.md`.
+
 3. Go to Project Settings → API. Copy the **Project URL** and the
    **anon public key**
 4. Open `supabase-config.js` and paste them in:
@@ -158,6 +168,13 @@ alter table feature_flags enable row level security;
 -- SQL editor (or the Table Editor UI), never something the app does.
 create policy "anyone can read flags" on feature_flags for select using (true);
 ```
+
+**Update (lockdown L4, complete):** the app no longer reads
+`feature_flags` from the client at all — the `place-order` Edge
+Function reads it server-side (service role) to decide `is_test` for
+the verified LINE user. The policy above was dropped in
+`supabase/sql/07_cutover.sql`; the table now has zero policies for any
+role. A fresh setup should skip creating this policy.
 
 To make someone a tester, you first need their LINE user ID — there's
 no admin UI for this yet, so get it once manually (e.g. a temporary
@@ -201,6 +218,13 @@ alter table members enable row level security;
 -- this row directly via the publishable key, no server in between.
 create policy "allow all" on members for all using (true) with check (true);
 ```
+
+**Update (lockdown L4, complete):** member rows are now written
+exclusively by the `upsert-member` Edge Function, from the verified
+LIFF ID token's claims — never from anything the client sends. The
+"allow all" policy above was dropped in `supabase/sql/07_cutover.sql`;
+`authenticated` (staff) keeps a `SELECT`-only policy for member search
+in the 會員儲值 panel. A fresh setup should skip creating this policy.
 
 Once this is in place: a tester's checkout (see above) stamps
 `orders.user_id`/`is_test` and upserts a `members` row automatically —
@@ -315,9 +339,13 @@ above) before touching money:
 - **`get-stored-value-balance`** — verifies the caller's LIFF ID token,
   reads their balance. No account row yet (never topped up) reads as
   balance 0, not an error.
-- **`spend-stored-value`** — verifies the LIFF ID token, calls
-  `spend_stored_value()`. Returns a distinct `insufficient_funds` error
-  code (not a generic failure) if the balance doesn't cover it.
+- ~~**`spend-stored-value`**~~ — **deleted at lockdown L2/L4.** Spending
+  stored value now happens as one step inside `place_order()` (the
+  security-definer Postgres function behind checkout — see "Server-side
+  identity verification" in CLAUDE.md), using the same balance-check
+  logic this function used to run standalone. Nothing calls this Edge
+  Function anymore; it and the `spend_stored_value()` Postgres function
+  it called were both removed.
 - **`topup-stored-value`** — verifies a staff PIN (`STAFF_PIN`, a
   Supabase Edge Function secret — distinct from the Cloudflare Worker
   secrets `STAFF_DASHBOARD_PIN`/`STAFF_DASHBOARD_SECRET` that gate
@@ -364,22 +392,29 @@ alter table orders add column payment_method text not null
   check (payment_method in ('cash_on_pickup', 'stored_value'));
 ```
 
-At checkout (`app.js`), a logged-in visitor whose balance covers the
-order total is offered a payment choice — 現場付款 stays selected by
-default even then (deliberate: stored value is opt-in, never assumed)
-alongside "使用儲值支付（餘額：NT$X）" showing their real balance. Guests
-and anyone whose balance doesn't cover the total never see the choice
-at all — no partial-spend UI, same no-partial-split decision as
-elsewhere in this app. Submitting with stored value selected generates
-the order's id client-side and calls `spend-stored-value` with it
-*before* the order itself is inserted; the order is only ever saved
-(with that same id, `payment_method = 'stored_value'`) once the spend
-actually succeeds. A spend failure (most likely `insufficient_funds`
-from a race with a concurrent order elsewhere, since the balance was
-already checked once when the sheet opened) shows a clear message and
-lets the visitor retry with cash instead of blocking checkout outright.
-The printed customer label's payment line (see `print.js`) reflects
-whichever method the order actually used.
+At checkout (`app.js`), a logged-in visitor is offered a payment
+choice — 現場付款 stays selected by default even when stored value
+covers the total (deliberate: stored value is opt-in, never assumed).
+**Update (lockdown L3):** when the balance doesn't cover the total, the
+儲值支付 option is now shown *disabled* with the balance
+("儲值支付（餘額 NT$40，不足）") rather than hidden outright, so a member
+can see why it's unavailable; it re-enables live as the cart total
+changes. Guests still never see the option at all. No partial-spend UI
+either way, same no-partial-split decision as elsewhere in this app.
+
+**Update (lockdown L2/L4):** submitting no longer calls
+`spend-stored-value` directly — the whole checkout (pricing, the slot
+reservation, the stored-value spend if chosen, the stamp-card
+redemption if requested, and the order insert) is one call to the
+`place-order` Edge Function, which does all of it atomically inside
+`place_order()`. A spend failure (`insufficient_funds`, most likely
+from a race with a concurrent order elsewhere) rolls back everything
+else from that attempt too — nothing is ever partially applied — and
+shows a clear message, letting the visitor retry with cash. The
+request also carries a `client_order_id` (one uuid per checkout,
+reused on retry), so a retry after a dropped network response can't
+double-charge. The printed customer label's payment line (see
+`print.js`) reflects whichever method the order actually used.
 
 ### Favourites
 
@@ -398,12 +433,15 @@ Deliberately the same permissive "allow all" shape already used for
 `orders`/`members`, not the hardened zero-policy + Edge Function
 pattern used for Stored Value — favouriting isn't money, and a client
 can already write `orders.user_id` for anyone via the anon key today,
-so this doesn't introduce a new weakness. **Update (lockdown L2b):** the
-app no longer writes this table directly — it goes through the
-`member-favorites` Edge Function (actions `list`/`add`/`remove`), which
-takes the member's id from the verified LIFF ID token and checks added
-item ids against `menu.json`. The "Allow all" policy above is dropped at
-the L4 cutover.
+that was true when this was first set up. **Update (lockdown L2b/L4,
+now complete):** the app no longer writes this table directly — it
+goes through the `member-favorites` Edge Function (actions
+`list`/`add`/`remove`), which takes the member's id from the verified
+LIFF ID token and checks added item ids against `menu.json`. The
+"Allow all" policy above was dropped at the L4 cutover
+(`supabase/sql/07_cutover.sql`) — `favorites` now has zero RLS
+policies at all, reachable only via that Edge Function's service-role
+client. A fresh setup should skip creating that policy entirely.
 
 Member-only: a star toggle (☆/★) appears on every item card (browse
 list, search results, popular row) only while logged in, optimistically
@@ -451,31 +489,37 @@ functions quietly drifting out of sync with each other:
   Asia/Taipei), sums that member's order totals for the day and
   compares to NT$85; checks `stamp_redemptions` for this week. Returns
   `{ days: [mon,tue,wed,thu], unlocked, redeemed, weekStart }`.
-- **`redeem-stamp-drink`** — re-derives unlocked/redeemed/is-it-Friday
-  itself from the database (via the same shared helper) rather than
-  trusting anything the client claims; rejects if any of those don't
-  hold. Otherwise inserts into `stamp_redemptions` — the primary key
+- ~~**`redeem-stamp-drink`**~~ — **deleted at lockdown L2/L4.**
+  Redemption now happens as one step inside `place_order()`: it
+  re-derives unlocked/redeemed/is-it-Friday itself (the `place-order`
+  Edge Function computes progress via the same shared helper before
+  calling it) rather than trusting anything the client claims, and the
+  insert into `stamp_redemptions` happens in the same transaction as
+  the order itself — the `(user_id, week_start)` primary key still
   rejects a concurrent double-redeem atomically, surfaced as the same
-  `already_redeemed` error a plain re-check would give.
+  `already_redeemed` error.
 
 At checkout (`app.js`), a logged-in member's stamp progress is fetched
 once at page load (not re-checked per checkout-sheet open the way
 Stored Value's balance is — a day's qualifying spend/this week's
-redemption don't meaningfully change mid-session). If it's Friday and
-this week is unlocked and not yet redeemed, a banner appears in
-checkout; picking a drink is just adding it to the cart like any other
-item, no special picker. Submitting calls `redeem-stamp-drink` with the
-client-generated order id *before* inserting the order (same
-sequencing as Stored Value's spend), and only discounts the total
+redemption don't meaningfully change mid-session; it's also re-fetched
+if the Asia/Taipei date changes or the page becomes visible again after
+being backgrounded, so a page left open overnight doesn't show stale
+circles). If it's Friday and this week is unlocked and not yet
+redeemed, a banner appears in checkout; picking a drink is just adding
+it to the cart like any other item, no special picker. **Update
+(lockdown L2/L4):** submitting sends `redeem_stamp: true` as part of
+the single `place-order` request (see the Checkout payment method
+section above) rather than calling `redeem-stamp-drink` separately —
+`place_order()` redeems and discounts the total
 (`min(drink price, 35)`, the most expensive 飲品 line if more than one
-qualifies) once that call actually succeeds — a failure (most likely a
-concurrent redemption elsewhere) doesn't block checkout, it just falls
-back to charging full price. **Not addressed in this pass:** the
-itemized lines on the order (and so the printed receipt / LINE chat
-message) still show each item at full price even when the total is
-discounted — the total is correct, but staff/customer would need to
-infer the redemption rather than see it itemized. Revisit if that
-turns out to matter in practice.
+qualifies) atomically with everything else, or not at all. A failure
+(most likely a concurrent redemption elsewhere) doesn't block
+checkout — it falls back to charging full price for the rest of that
+attempt. The discount now prints/shows as its own "集點折抵" line
+(receipt, LINE chat message, and order-history sheet all show it) —
+item lines are still at full price, with the discount broken out
+separately rather than distributed across items.
 
 The 5-circle progress widget (member benefits card — see
 `buildStampCardRow()`/`refreshStampWidgetUI()`) replaces the old

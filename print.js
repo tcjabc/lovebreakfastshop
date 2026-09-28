@@ -794,22 +794,28 @@ function buildCustomerLabelModel(order, { withLogo = false } = {}) {
   if (order.memberName) {
     lines.push({ text: divider, align: "left", bold: false, size: "normal" });
 
-    // stampSnapshot.days/unlocked are captured once at checkout (see
-    // app.js's submitOrder()) so an old receipt stays an accurate
-    // record even after later orders change the member's real
-    // progress — see the comment on insertOrder()'s stampSnapshot
-    // param in supabase-config.js. That capture happens BEFORE this
-    // order is written to `orders`, so today's slot in it can't yet
-    // reflect this order's own spend. Fix up just today's slot here:
-    // if it's not already true and this order's own total alone meets
-    // the threshold, today's cumulative-including-this-order is
-    // provably >= threshold regardless of what came before it today,
-    // so it's safe to mark filled. This can't produce a false
-    // "filled" — only a same-day member who already crossed the
-    // threshold via SEVERAL smaller orders today (none of which
-    // individually hit $85) would still show unfilled here, since
-    // print.js has no per-day running total to add to, only the
-    // login-time boolean snapshot plus this one order's total.
+    // stampSnapshot.days/unlocked is computed server-side by the
+    // place-order Edge Function at the moment THIS order is placed (see
+    // its stamp-snapshot step), so an old receipt stays an accurate
+    // record even after later orders change the member's real progress
+    // — and, unlike the old client-side-at-login version this replaced,
+    // place-order's snapshot already folds in this order's own spend
+    // for today's slot before it's ever written to `orders`. So the
+    // fix-up below is normally a no-op today. It's kept as a defensive
+    // fallback for any order row still carrying the OLD shape (captured
+    // client-side at login, before this order existed, via the
+    // now-removed insertOrder()/supabase-config.js path) — those can
+    // undercount today's slot the same way described below.
+    //
+    // If today's slot isn't already true and this order's own total
+    // alone meets the threshold, today's cumulative-including-this-order
+    // is provably >= threshold regardless of what came before it today,
+    // so it's safe to mark filled. This can't produce a false "filled"
+    // — only a same-day member who already crossed the threshold via
+    // SEVERAL smaller orders today (none of which individually hit $85)
+    // would still show unfilled here, since print.js has no per-day
+    // running total to add to, only the stored snapshot plus this one
+    // order's total.
     const days = ((order.stampSnapshot && order.stampSnapshot.days) || [false, false, false, false]).slice();
     const weekday = taipeiNowWeekday(); // 0=Sun..6=Sat, Taipei, "now" at print time
     const todayIndex = weekday - 1; // Mon(1)->0 .. Thu(4)->3; Fri/Sat/Sun fall outside 0-3 and are left alone
